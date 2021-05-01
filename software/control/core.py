@@ -185,7 +185,7 @@ class ImageSaver(QObject):
                 # create a new folder
                 if file_ID == 0:
                     os.mkdir(os.path.join(self.base_path,self.experiment_ID,str(folder_ID)))
-                saving_path = os.path.join(self.base_path,self.experiment_ID,str(folder_ID),str(file_ID) + '.' + self.image_format)
+                saving_path = os.path.join(self.base_path,self.experiment_ID,str(folder_ID),str(file_ID) + '_' + str(frame_ID) + '.' + self.image_format)
                 
                 cv2.imwrite(saving_path,image)
                 self.counter = self.counter + 1
@@ -335,7 +335,11 @@ class LiveController(QObject):
             self.is_live = False
             if self.trigger_mode == TriggerMode.SOFTWARE:
                 self._stop_software_triggerred_acquisition()
-            self.camera.stop_streaming()
+            # self.camera.stop_streaming() # 20210113 this line seems to cause problems when using af with multipoint
+            if self.trigger_mode == TriggerMode.CONTINUOUS:
+            	self.camera.stop_streaming()
+            if self.trigger_mode == TriggerMode.HARDWARE:
+                self.camera.stop_streaming()
             if self.control_illumination:
                 self.turn_off_illumination()
 
@@ -353,7 +357,7 @@ class LiveController(QObject):
             self.timestamp_last = timestamp_now
             self.fps_real = self.counter
             self.counter = 0
-            print('real trigger fps is ' + str(self.fps_real))
+            # print('real trigger fps is ' + str(self.fps_real))
 
     def _start_software_triggerred_acquisition(self):
         self.timer_software_trigger.start()
@@ -373,13 +377,13 @@ class LiveController(QObject):
             if self.is_live:
                 self._start_software_triggerred_acquisition()
         if mode == TriggerMode.HARDWARE:
-            print('hardware trigger to be added')
-            #self.camera.set_hardware_triggered_acquisition()
+            if self.trigger_mode == TriggerMode.SOFTWARE:
+                self._stop_software_triggerred_acquisition()
+            # self.camera.reset_camera_acquisition_counter()
+            self.camera.set_hardware_triggered_acquisition()
         if mode == TriggerMode.CONTINUOUS: 
             if self.trigger_mode == TriggerMode.SOFTWARE:
                 self._stop_software_triggerred_acquisition()
-            if self.trigger_mode == TriggerMode.HARDWARE:
-                pass #@@@ to be implemented
             self.camera.set_continuous_acquisition()
         self.trigger_mode = mode
 
@@ -526,7 +530,7 @@ class AutoFocusController(QObject):
         focus_measure_max = 0
 
         z_af_offset_usteps = self.deltaZ_usteps*round(self.N/2)
-        self.navigationController.move_z(-z_af_offset_usteps)
+        self.navigationController.move_z_usteps(-z_af_offset_usteps)
 
         # maneuver for achiving uniform step size and repeatability when using open-loop control
         self.navigationController.move_z_usteps(80)
@@ -742,6 +746,8 @@ class MultiPointController(QObject):
         # along y
         for i in range(self.NY):
 
+            self.FOV_counter = 0 # so that AF at the beginning of each new row
+
             # along x
             for j in range(self.NX):
 
@@ -750,7 +756,13 @@ class MultiPointController(QObject):
 
                     # perform AF only if when not taking z stack
                     if (self.NZ == 1) and (self.do_autofocus) and (self.FOV_counter%Acquisition.NUMBER_OF_FOVS_PER_AF==0):
+                    # temporary: replace the above line with the line below to AF every FOV
+                    # if (self.NZ == 1) and (self.do_autofocus):
+                        configuration_name_AF = 'BF LED matrix full'
+                        config_AF = next((config for config in self.configurationManager.configurations if config.name == configuration_name_AF))
+                        self.signal_current_configuration.emit(config_AF)
                         self.autofocusController.autofocus()
+                        time.sleep(4) # temporary
 
                     if (self.NZ > 1):
                         # maneuver for achiving uniform step size and repeatability when using open-loop control

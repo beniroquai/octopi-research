@@ -14,16 +14,16 @@ class MicroscopeMode:
 
 class WaitTime:
     BASE = 0.1
-    X = 0.4     # per mm
-    Y = 0.4	 # per mm
+    X = 0.4*2.54     # per mm
+    Y = 0.4*2.54	 # per mm
     Z = 0.2     # per mm
     def __init__(self):
         pass
 
 class AF:
     STOP_THRESHOLD = 0.85
-    CROP_WIDTH = 500
-    CROP_HEIGHT = 500
+    CROP_WIDTH = 800
+    CROP_HEIGHT = 800
     def __init__(self):
         pass
 
@@ -79,3 +79,12 @@ class ILLUMINATION_CODE:
     ILLUMINATION_SOURCE_405NM = 11
     ILLUMINATION_SOURCE_488NM = 12
     ILLUMINATION_SOURCE_638NM = 13
+
+class CAMERA:
+    ROI_OFFSET_X_DEFAULT = 0
+    ROI_OFFSET_Y_DEFAULT = 0
+    ROI_WIDTH_DEFAULT = 3000
+    ROI_HEIGHT_DEFAULT = 3000
+
+class VOLUMETRIC_IMAGING:
+    NUM_PLANES_PER_VOLUME = 20
