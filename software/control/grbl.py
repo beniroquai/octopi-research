@@ -55,9 +55,9 @@ Connecting 28BYJ-48 directly to Arduino UNO CNC Shield using GRBL:
 4 ->Blue
 
 Commands: for Z-axis
-    $102=32768      # Z Axis steps/mm. 32768 is 8*4096.which will give you 1 rev per millimeter, which needs to be adjusted depending on your own belt or geared setup accordingly. 
-    $112 = 100.     # Z Axis maximim velocity (mm/min) 
-    $122 = 20       # Z-Axis Acceleration (mm/sec2) 
+    $102=32768      # Z Axis steps/mm. 32768 is 8*4096.which will give you 1 rev per millimeter, which needs to be adjusted depending on your own belt or geared setup accordingly.
+    $112 = 100.     # Z Axis maximim velocity (mm/min)
+    $122 = 20       # Z-Axis Acceleration (mm/sec2)
 '''
 
 class grblboard:
@@ -68,7 +68,7 @@ class grblboard:
     zero_coordinates = currentposition
     backlash = 0
 
-    # 
+    #
     steps_per_mm_x = 640 # how many revolution per fiven distnace => steps/mm
     steps_per_mm_y = 640 # Steps-per-Revolution*microsteps/mm per revolution
     steps_per_mm_z = 64 # 320 # in our case: 200*16*2mm= 6400
@@ -88,7 +88,7 @@ class grblboard:
 
     t_idle_until_release = 5 # wait until the current to block motors is released (necessary for disruption free scanning)
     idletime = 25 # 255 # means infinity wait time
-    is_idling = False # check if idling 
+    is_idling = False # check if idling
     is_motor_release = True
     wait_loop_factor = 20
 
@@ -101,9 +101,9 @@ class grblboard:
     laser_intensity = 0
     led_state = 0
 
-    cmd_queue = None 
+    cmd_queue = None
     rec_queue = None
-    
+
 
     def __init__(self, serialport = "/dev/ttyUSB0",
                  currentposition=currentposition, backlash=backlash, is_homing=True):
@@ -145,12 +145,12 @@ class grblboard:
         self.serial_thread_write.join()
         self.serialport.flushInput()
         self.serialport.flushOutput()
-        self.serialport.close()        
+        self.serialport.close()
 
     def initserial(self):
         """ Initiliazing the serial connection and set home coordinates """
         self.sendgrbl("\r\n\r\n") # Wake up grbl
-        time.sleep(2)   # Wait for grbl to initialize 
+        time.sleep(2)   # Wait for grbl to initialize
 
         self.sendgrbl("$$") # Soft reset
         #self.sendgrbl("$X") # Clear possible errors
@@ -180,7 +180,7 @@ class grblboard:
             # assign a thread to periodically pull the position from the GRBL Board
             print("Setting up the position poll thread")
             threading.Thread(target=self.poll_position_periodically, args=(.1,)).start()
-        
+
     def poll_position_periodically(self, delay=.2):
         while True:
             self.sendgrbl("?")
@@ -213,7 +213,7 @@ class grblboard:
     def setideltime(self,idletime=None):
         if idletime is not None:
             self.idletime = idletime
-        self.sendgrbl('$1='+str(self.idletime)) # default: 314.961 #,x step/mm) 
+        self.sendgrbl('$1='+str(self.idletime)) # default: 314.961 #,x step/mm)
 
     def setspeed(self, maxspeed_x=None, maxspeed_y=None, maxspeed_z=None):
         if maxspeed_x is not None:
@@ -249,19 +249,19 @@ class grblboard:
         if steps_per_mm_y is not None:
             self.steps_per_mm_y = steps_per_mm_y
         if steps_per_mm_z is not None:
-            self.steps_per_mm_z = steps_per_mm_z        
-        self.sendgrbl('$100='+str(self.steps_per_mm_x)) # default: 314.961 #,x step/mm) 
-        self.sendgrbl('$101='+str(self.steps_per_mm_y)) # default: 314.961 #,y step/mm) 
-        self.sendgrbl('$102='+str(self.steps_per_mm_z)) # default: 314.961 #,z step/mm) 
+            self.steps_per_mm_z = steps_per_mm_z
+        self.sendgrbl('$100='+str(self.steps_per_mm_x)) # default: 314.961 #,x step/mm)
+        self.sendgrbl('$101='+str(self.steps_per_mm_y)) # default: 314.961 #,y step/mm)
+        self.sendgrbl('$102='+str(self.steps_per_mm_z)) # default: 314.961 #,z step/mm)
 
-        
+
     def go_home_z(self, offsetz=-10):
         self.resethome()
         speed_z_old = self.maxspeed_z
         self.setspeed(self.maxspeed_x, self.maxspeed_y, 200)
         self.move_rel((0,0,offsetz))
         self.move_rel((0,0,3))
-        self.setspeed(self.maxspeed_x, self.maxspeed_y, speed_z_old)        
+        self.setspeed(self.maxspeed_x, self.maxspeed_y, speed_z_old)
         self.resethome()
 
     def go_home(self, offsetx=0, offsety=0):
@@ -278,7 +278,7 @@ class grblboard:
             else:
                 # just make sure it's not getting overwritten by the "IDLE"  command
                 self.is_homing_in_progress = True
-            if abs(time.time()-time_init) > 30: 
+            if abs(time.time()-time_init) > 30:
                 break # if something goes wrong, break after half a minute
         self.sendgrbl("$X")
         self.sendgrbl("$22=0") # disable homing on startup
@@ -301,8 +301,8 @@ class grblboard:
         if self.is_debug: print('myhome is: '+str(self.currentposition))
 
     def getcurrentpos(self):
-        # retrieve the latest position in the stack        
-        return (self.currentposition[0], self.currentposition[1], self.currentposition[2])        
+        # retrieve the latest position in the stack
+        return (self.currentposition[0], self.currentposition[1], self.currentposition[2])
 
     def _receiving(self):
         while self._do_receive == True:
@@ -316,14 +316,14 @@ class grblboard:
             asci = data.decode("ascii")
         except UnicodeDecodeError:
             asci = ""
-            
+
         for i in range(0, len(asci)):
             char = asci[i]
             self._buf_receive += char
             # not all received lines are complete (end with \n)
             if char == "\n":
                 #self.queue.put(self._buf_receive.strip())
-                
+
                 return_message = self._buf_receive.strip()
                 if self.is_debug: print("Return_message: "+str(return_message))
 
@@ -347,7 +347,7 @@ class grblboard:
                 if return_message.find('Idle')>0:
                     # The idle command comes once the homing is done
                     self.is_homing_in_progress = False
-                
+
                 self._buf_receive = ""
 
 
@@ -362,16 +362,16 @@ class grblboard:
                 self.serialport.write((cmd + '\n').encode())
 
                 if cmd.find("$H")>0:
-                    # homing in progress 
+                    # homing in progress
                     self.is_homing_in_progress = True
 
     def sendgrbl(self, cmd="?"):
         if self.is_debug: print("GRBL sending: "+cmd)
         self.cmd_queue.put(cmd)
         return_message = ''
-            
+
         return return_message
-      
+
     def move_rel(self, position=(0,0,0), wait_until_done=False):
         # check if stage is moving or not
         self.go_to(position[0], position[1], position[2], 'rel')
@@ -402,16 +402,16 @@ class grblboard:
             #if self.is_debug: print("waiting until stage is free..")
             if not self.is_moving:
                 break
-        
+
         # make sure motors don't stop when repeated movements are done
         if not self.is_idling and self.is_motor_release: # don't idle if we don't want to do that
             self.is_idling = True
             self.idling_thread = threading.Thread(target=self.start_idling)
             self.idling_thread.start()
 
-        
+
         # block the stage
-        self.is_moving = True #    
+        self.is_moving = True #
 
         # do actual movement
         self.moving_thread = threading.Thread(target=self.go_to_thread, args=(pos_x, pos_y, pos_z, mode,))
@@ -427,18 +427,18 @@ class grblboard:
             if not self.is_moving and not plan_to_leave_loop:
                 plan_to_leave_loop = True
                 time_over = time.time()
-            
+
             if plan_to_leave_loop:
                 time.sleep(.1)
                 if(time.time()-time_over)>self.t_idle_until_release:
                     break
-            
+
             if self.is_moving:
                 plan_to_leave_loop = False
-        
+
 
         self.setideltime(25)
-        # odd hackaround, otherwise it won't apply the change 
+        # odd hackaround, otherwise it won't apply the change
         #self.moving_thread = threading.Thread(target=self.go_to_thread, args=(0.01, 0, 0, 'rel',))
         # apply change in idle time (really weird, $1=2000 doesn't do anything and limits it to 128)
         self.sendgrbl("$1=25")
@@ -450,19 +450,19 @@ class grblboard:
 
 
 
-    def go_to_thread(self, pos_x=0, pos_y=0, pos_z=0, mode='abs'):     
-        
+    def go_to_thread(self, pos_x=0, pos_y=0, pos_z=0, mode='abs'):
+
         # Stream g-code to grbl
-        g_dim = "G21"                           # This measures Metric 
+        g_dim = "G21"                           # This measures Metric
         g_dist = "G90"
         ''' obsolote with the mode==rel condition below
-        if mode=="abs": 
+        if mode=="abs":
             g_dist = "G90"                          # G91 is for incremental, G90 is for absolute distance
         elif mode == 'rel':
             g_dist = "G91"
         '''
         g_dist = "G90"                          # G91 is for incremental, G90 is for absolute distance
-        
+
         # steps to go:
         old_position = self.currentposition
 
@@ -470,10 +470,10 @@ class grblboard:
         g_speed = "F"+format(self.speed, '.10f')#
 
         # construct command string
-        cmd = g_dim + " " + g_dist 
+        cmd = g_dim + " " + g_dist
 
         # super weird hack around - only to make OFM happy
-        
+
         if mode == 'rel':
             # calculate difference coordinates where you want to go
             togo_x = (old_position[0]+pos_x)
@@ -482,7 +482,7 @@ class grblboard:
             wait_loop = np.max((abs(pos_x),abs(pos_y),abs(pos_z)))*self.wait_loop_factor# define a wait threshold until the loop below should break without reaching the final position
 
         elif mode == 'abs': # remember: We are always in absolute coordinates!!
-            togo_x = pos_x 
+            togo_x = pos_x
             togo_y = pos_y
             togo_z = pos_z
             wait_loop = np.max((abs(old_position[0]-pos_x), abs(old_position[1]-pos_y), abs(old_position[2]-pos_z)))*self.wait_loop_factor # define a wait threshold until the loop below should break without reaching the final position
@@ -510,11 +510,11 @@ class grblboard:
                 if togo_y <= max_lim_y:
                     togo_y = max_lim_y
                     print("Reaching Maximum in y")
-            cmd += "Y"+str(togo_y) 
-            
-        if not togo_z == old_position[2]: 
-            cmd += "Z"+str(togo_z) 
-            g_speed = "F"+format(self.speed_z, '.10f')#    
+            cmd += "Y"+str(togo_y)
+
+        if not togo_z == old_position[2]:
+            cmd += "Z"+str(togo_z)
+            g_speed = "F"+format(self.speed_z, '.10f')#
 
         # finalize string
         cmd += " " + g_speed
@@ -525,16 +525,16 @@ class grblboard:
         #%% Make sure the destination is reached
         diffx, diffy, diffz = 0,0,0
         t1 = time.time()
-        while(True): 
+        while(True):
             # read position list
             self.currentposition = self.getcurrentpos()
             pos_x_current, pos_y_current, pos_z_current = self.currentposition[0],self.currentposition[1],self.currentposition[2]
             # onyl check the difference if there is a motion in this direction
             if(cmd.find('X')>=0): diffx = togo_x - pos_x_current
             if(cmd.find('Y')>=0): diffy = togo_y - pos_y_current
-            if(cmd.find('Z')>=0): diffz = togo_z - pos_z_current 
+            if(cmd.find('Z')>=0): diffz = togo_z - pos_z_current
 
-            if(abs(diffx)<.01 and 
+            if(abs(diffx)<.01 and
                 abs(diffy)<.01 and
                 abs(diffz)<.01):
                 break
@@ -542,7 +542,7 @@ class grblboard:
             if abs(time.time()-t1)>wait_loop:
                 print("Not reaching limit yet..")# timelimit reached
                 print('DIFF: x: '+str(diffx) + ', y: '+str(diffy) + ', z: '+str(diffz))
-                break            
+                break
             #%%
         self.is_moving = False
 
@@ -553,7 +553,7 @@ class grblboard:
             prefix = "M4"
         else:
             prefix = "M3"
-        
+
         cmd =  "G21 G90 " + prefix+" S"+str(self.laser_intensity)
         return self.sendgrbl(cmd)
 
@@ -564,6 +564,6 @@ class grblboard:
             prefix = "M4"
         else:
             prefix = "M3"
-        
+
         cmd =  "G21 G90 " + prefix + " S"+str(self.laser_intensity)
         return self.sendgrbl(cmd)

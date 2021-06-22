@@ -8,7 +8,7 @@ from control._def import *
 import control.grbldriver as grbldriver
 
 # constants depending on the configuration
-OFM_TO_GRBL_FAC = 1000 #74820/1000 # 1000 steps are 74.2 mm 
+OFM_TO_GRBL_FAC = 1000 #74820/1000 # 1000 steps are 74.2 mm
 OFM_TO_GRBL_FAC_Z = 1000 # 10
 # reverse display vs. motion?
 DIR_X = 1
@@ -32,7 +32,7 @@ class Microcontroller():
         self.board.write_global_config()
         self.board.write_all_settings()
         self.board.verify_settings()
-        
+
         #self.board.home()
         self.board.reset_stage()
 
@@ -40,10 +40,10 @@ class Microcontroller():
         """Cleanly close communication with the stage"""
         if hasattr(self, "board"):
             self.board.close()
-        
+
     def toggle_LED(self,state):
         self.board.set_led(state)
-    
+
     def toggle_laser(self,state):
         self.board.set_laser_intensity(state)
 
@@ -119,7 +119,7 @@ class Microcontroller():
             $132 = 200.000    (Z-axis maximum travel, millimeters)
         '''
         self.board.sendgrbl(command)
-        
+
     def read_received_packet(self):
         # wait to receive data
         pass
@@ -141,7 +141,7 @@ class Microcontroller_Simulation():
 
     def toggle_LED(self,state):
         pass
-    
+
     def toggle_laser(self,state):
         pass
 
@@ -180,5 +180,3 @@ class Microcontroller_Simulation():
 
     def set_illumination(self,illumination_source,intensity):
         pass
-
-

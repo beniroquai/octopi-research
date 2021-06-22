@@ -1,5 +1,5 @@
 # set QT_API environment variable
-import os 
+import os
 os.environ["QT_API"] = "pyqt5"
 import qtpy
 
@@ -26,7 +26,7 @@ class OctopiGUI(QMainWindow):
 		# load objects
 		self.camera = camera.Camera()
 		self.microcontroller = microcontroller.Microcontroller(serialport="COM12", is_homing=False)
-		
+
 		self.configurationManager = core.ConfigurationManager()
 		self.streamHandler = core.StreamHandler()
 		self.liveController = core.LiveController(self.camera,self.microcontroller,self.configurationManager)
@@ -62,7 +62,7 @@ class OctopiGUI(QMainWindow):
 		layout.addWidget(self.navigationWidget,2,0)
 		layout.addWidget(self.autofocusWidget,3,0)
 		layout.addWidget(self.recordingControlWidget,4,0)
-		
+
 		# transfer the layout to the central widget
 		self.centralWidget = QWidget()
 		self.centralWidget.setLayout(layout)
@@ -77,7 +77,7 @@ class OctopiGUI(QMainWindow):
 		self.streamHandler.image_to_display.connect(self.imageDisplay.enqueue)
 		self.streamHandler.packet_image_to_write.connect(self.imageSaver.enqueue)
 		self.streamHandler.packet_image_for_tracking.connect(self.trackingController.on_new_frame)
-		
+
 		self.imageDisplay.image_to_display.connect(self.imageDisplayWindow.display_image) # may connect streamHandler directly to imageDisplayWindow
 		self.liveControlWidget.signal_newExposureTime.connect(self.cameraSettingWidget.set_exposure_time)
 		self.liveControlWidget.signal_newAnalogGain.connect(self.cameraSettingWidget.set_analog_gain)
@@ -88,10 +88,10 @@ class OctopiGUI(QMainWindow):
 		self.navigationController.zPos.connect(self.navigationWidget.label_Zpos.setNum)
 		self.autofocusController.image_to_display.connect(self.imageDisplayWindow.display_image)
 
-		
+
 	def closeEvent(self, event):
 		event.accept()
-		# self.softwareTriggerGenerator.stop() @@@ => 
+		# self.softwareTriggerGenerator.stop() @@@ =>
 		self.liveController.stop_live()
 		self.camera.close()
 		self.imageSaver.close()
