@@ -5,11 +5,11 @@ import time
 import numpy as np
 
 from control._def import *
-from control.grbl import grblboard
+import control.grbldriver as grbldriver
 
 # constants depending on the configuration
-OFM_TO_GRBL_FAC = 1 #74820/1000 # 1000 steps are 74.2 mm 
-OFM_TO_GRBL_FAC_Z = 1# 10
+OFM_TO_GRBL_FAC = 1000 #74820/1000 # 1000 steps are 74.2 mm
+OFM_TO_GRBL_FAC_Z = 1000 # 10
 # reverse display vs. motion?
 DIR_X = 1
 DIR_Y = 1
@@ -20,21 +20,30 @@ DIR_Z = 1
 class Microcontroller():
     def __init__(self,parent=None,serialport="COM5", is_homing=False):
         self.port = serialport
-        self.board = grblboard(serialport=serialport, is_homing=is_homing)
+        self.board = grbldriver.GrblDriver(self.port)
+
 
         # Initialise backlash storage, used by property setter/getter
         self._backlash = None
         self.settle_time = 0.5  # Default move settle time
         self._position_on_enter = None
 
+        # init the stage
+        self.board.write_global_config()
+        self.board.write_all_settings()
+        self.board.verify_settings()
+
+        #self.board.home()
+        self.board.reset_stage()
+
     def close(self):
         """Cleanly close communication with the stage"""
         if hasattr(self, "board"):
             self.board.close()
-        
+
     def toggle_LED(self,state):
         self.board.set_led(state)
-    
+
     def toggle_laser(self,state):
         self.board.set_laser_intensity(state)
 
@@ -55,22 +64,22 @@ class Microcontroller():
         print("Set Illumination: "+str(illumination_source)+" - "+str(intensity))
 
     def move_x(self,delta):
-        self.board.move_rel((delta*OFM_TO_GRBL_FAC,0,0), wait_until_done=False)
+        self.board.move_rel((delta*OFM_TO_GRBL_FAC,0,0), blocking=False)
 
     def move_x_usteps(self,usteps):
-        self.board.move_rel((usteps*OFM_TO_GRBL_FAC,0,0), wait_until_done=False)
+        self.board.move_rel((usteps*OFM_TO_GRBL_FAC,0,0), blocking=False)
 
     def move_y(self,delta):
-        self.board.move_rel((0,delta*OFM_TO_GRBL_FAC,0), wait_until_done=False)
+        self.board.move_rel((0,delta*OFM_TO_GRBL_FAC,0), blocking=False)
 
     def move_y_usteps(self,usteps):
-        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), wait_until_done=False)
+        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), blocking=False)
 
     def move_z(self,delta):
-        self.board.move_rel((0,0,delta*OFM_TO_GRBL_FAC_Z), wait_until_done=False)
+        self.board.move_rel((0,0,delta*OFM_TO_GRBL_FAC_Z), blocking=False)
 
     def move_z_usteps(self,usteps):
-        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), wait_until_done=False)
+        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), blocking=False)
 
     def send_command(self,command):
         '''
@@ -109,19 +118,19 @@ class Microcontroller():
             $131 = 200.000    (Y-axis maximum travel, millimeters)
             $132 = 200.000    (Z-axis maximum travel, millimeters)
         '''
-        self.board.sendgrbl(cmd)
-        
+        self.board.sendgrbl(command)
+
     def read_received_packet(self):
         # wait to receive data
         pass
         # Don't need that?!
-        data = self.board.currentposition
+        data = self.board.positions
         return data
 
     def read_received_packet_nowait(self):
         # wait to receive data
-        data = self.board.currentposition
-        return data
+        data = self.board.positions
+        return tuple(data)
 
 class Microcontroller_Simulation():
     def __init__(self,parent=None):
@@ -132,7 +141,7 @@ class Microcontroller_Simulation():
 
     def toggle_LED(self,state):
         pass
-    
+
     def toggle_laser(self,state):
         pass
 
@@ -171,5 +180,3 @@ class Microcontroller_Simulation():
 
     def set_illumination(self,illumination_source,intensity):
         pass
-
-
