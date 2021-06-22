@@ -1,0 +1,7 @@
+pip install lxml
+pip install pyserial
+pip install pyqtgraph
+pip install pyqt5 --user --force-reinstall
+pip install opencv-python
+pip install pyqt
+python -m pip install -U scikit-image

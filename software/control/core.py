@@ -211,7 +211,7 @@ class ImageSaver(QObject):
 
     def start_new_experiment(self,experiment_ID):
         # generate unique experiment ID
-        self.experiment_ID = experiment_ID + '_' + datetime.now().strftime('%Y-%m-%d %H-%M-%-S.%f')
+        self.experiment_ID = experiment_ID + '_' + time.strftime("%Y%m%d-%H%M%S")
         self.recording_start_time = time.time()
         # create a new folder
         try:
@@ -469,9 +469,13 @@ class NavigationController(QObject):
         pos = self.microcontroller.read_received_packet_nowait()
         if pos is None:
             return
-        self.x_pos = utils.unsigned_to_signed(pos[0:3],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_XY # @@@TODO@@@: move to microcontroller?
-        self.y_pos = utils.unsigned_to_signed(pos[3:6],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_XY # @@@TODO@@@: move to microcontroller?
-        self.z_pos = utils.unsigned_to_signed(pos[6:9],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_Z  # @@@TODO@@@: move to microcontroller?
+
+        if type(pos)==tuple:
+            self.x_pos, self.y_pos, self.z_pos = pos[0], pos[1], pos[2]
+        else:
+            self.x_pos = utils.unsigned_to_signed(pos[0:3],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_XY # @@@TODO@@@: move to microcontroller?
+            self.y_pos = utils.unsigned_to_signed(pos[3:6],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_XY # @@@TODO@@@: move to microcontroller?
+            self.z_pos = utils.unsigned_to_signed(pos[6:9],MicrocontrollerDef.N_BYTES_POS)/Motion.STEPS_PER_MM_Z  # @@@TODO@@@: move to microcontroller?
         self.xPos.emit(self.x_pos)
         self.yPos.emit(self.y_pos)
         self.zPos.emit(self.z_pos*1000)
@@ -959,7 +963,7 @@ class ImageDisplayWindow(QMainWindow):
         self.setFixedSize(width,height)
 
     def display_image(self,image):
-        self.graphics_widget.img.setImage(image,autoLevels=False)
+        self.graphics_widget.img.setImage(image,autoLevels=True)
         # print('display image')
 
     def updateROI(self):
