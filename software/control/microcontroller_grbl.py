@@ -8,8 +8,8 @@ from control._def import *
 import control.grbldriver as grbldriver
 
 # constants depending on the configuration
-OFM_TO_GRBL_FAC = 1000 #74820/1000 # 1000 steps are 74.2 mm
-OFM_TO_GRBL_FAC_Z = 1000 # 10
+PHYS_TO_GRBL_FAC = 1000 #74820/1000 # 1000 steps are 74.2 mm
+PHYS_TO_GRBL_FAC_Z = 1000 # 10
 # reverse display vs. motion?
 DIR_X = 1
 DIR_Y = 1
@@ -64,22 +64,22 @@ class Microcontroller():
         print("Set Illumination: "+str(illumination_source)+" - "+str(intensity))
 
     def move_x(self,delta):
-        self.board.move_rel((delta*OFM_TO_GRBL_FAC,0,0), blocking=False)
+        self.board.move_rel((delta*PHYS_TO_GRBL_FAC,0,0), blocking=False)
 
     def move_x_usteps(self,usteps):
-        self.board.move_rel((usteps*OFM_TO_GRBL_FAC,0,0), blocking=False)
+        self.board.move_rel((usteps*PHYS_TO_GRBL_FAC,0,0), blocking=False)
 
     def move_y(self,delta):
-        self.board.move_rel((0,delta*OFM_TO_GRBL_FAC,0), blocking=False)
+        self.board.move_rel((0,delta*PHYS_TO_GRBL_FAC,0), blocking=False)
 
     def move_y_usteps(self,usteps):
-        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), blocking=False)
+        self.board.move_rel((0,usteps*PHYS_TO_GRBL_FAC,0), blocking=False)
 
     def move_z(self,delta):
-        self.board.move_rel((0,0,delta*OFM_TO_GRBL_FAC_Z), blocking=False)
+        self.board.move_rel((0,0,delta*PHYS_TO_GRBL_FAC_Z), blocking=False)
 
     def move_z_usteps(self,usteps):
-        self.board.move_rel((0,usteps*OFM_TO_GRBL_FAC,0), blocking=False)
+        self.board.move_rel((0,usteps*PHYS_TO_GRBL_FAC,0), blocking=False)
 
     def send_command(self,command):
         '''
