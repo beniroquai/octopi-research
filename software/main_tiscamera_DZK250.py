@@ -9,7 +9,7 @@ from qtpy.QtWidgets import *
 from qtpy.QtGui import *
 
 # app specific libraries
-import control.gui_camera_only_tiscamera as gui
+import control.gui_tiscamera_DZK250 as gui
 
 if __name__ == "__main__":
 

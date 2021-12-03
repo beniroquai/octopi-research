@@ -9,13 +9,17 @@ sudo apt-get install python3-pyqtgraph
 sudo apt-get install python3-pyqt5
 pip3 install qtpy pyserial
 ```
+If opencv and lxml not preinstalled (e.g. if you're not using a Jetson but a regular computer), run the following
+```
+pip3 install --upgrade setuptools pip
+pip3 install opencv-python opencv-contrib-python
+pip3 install lxml
+```
 
 ### install camera drivers
 If you're using The Imaging Source cameras, follow instructions on https://github.com/TheImagingSource/tiscamera 
 
 If you're using Daheng cameras, follow instructions in the `drivers and libraries/daheng camera` folder
-
-
 
 ### enable access to serial ports without sudo
 
@@ -40,6 +44,17 @@ git clone --branch torchvision v0.6.0 https://github.com/pytorch/vision torchvis
 cd torchvision
 sudo python3 setup.py install
 ```
+## Configuring the software
+Create a `configuration.txt` file in the software folder to set up variables for a specific machine. The file is loaded by [`control/_def.py`](https://github.com/hongquanli/octopi-research/blob/master/software/control/_def.py) There should be only one `configuration*.txt` file in the software folder. You may edit the [`configuration_example.txt` file](https://github.com/hongquanli/octopi-research/blob/master/software/configuration_example.txt) and rename it.
+
+The following aspects are specified in the configuration file:
+- stage movement signs (what is forward vs backward) (e.g. `STAGE_MOVEMENT_SIGN_X`)
+- stage motor and lead screw specs (in particular screw pitch, e.g. `SCREW_PITCH_X_MM`)
+- whether encoders are used and encoder-related settings (e.g. `USE_ENCODER_X`)
+- whether homing is enabled for a particular axis (e.g. `HOMING_ENABLED_X`)
+- whether tracking is enabled (`ENABLE_TRACKING`)
+- plate reader related definations (`class PLATE_READER`)
+
 ## Using the software
 Use one of the following to start the program
 ```

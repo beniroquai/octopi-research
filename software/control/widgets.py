@@ -12,17 +12,15 @@ from control._def import *
 
 class CameraSettingsWidget(QFrame):
 
-    def __init__(self, camera, liveController, main=None, *args, **kwargs):
+    def __init__(self, camera, include_gain_exposure_time = True, main=None, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
         self.camera = camera
-        self.liveController = liveController
-        # add components to self.grid
-        self.add_components()        
+        self.add_components(include_gain_exposure_time)        
         # set frame style
         self.setFrameStyle(QFrame.Panel | QFrame.Raised)
 
-    def add_components(self):
+    def add_components(self,include_gain_exposure_time):
 
         # add buttons and input fields
         self.entry_exposureTime = QDoubleSpinBox()
@@ -77,10 +75,11 @@ class CameraSettingsWidget(QFrame):
 
         # layout
         grid_ctrl = QGridLayout()
-        grid_ctrl.addWidget(QLabel('Exposure Time (ms)'), 0,0)
-        grid_ctrl.addWidget(self.entry_exposureTime, 0,1)
-        grid_ctrl.addWidget(QLabel('Analog Gain'), 1,0)
-        grid_ctrl.addWidget(self.entry_analogGain, 1,1)
+        if include_gain_exposure_time:
+            grid_ctrl.addWidget(QLabel('Exposure Time (ms)'), 0,0)
+            grid_ctrl.addWidget(self.entry_exposureTime, 0,1)
+            grid_ctrl.addWidget(QLabel('Analog Gain'), 1,0)
+            grid_ctrl.addWidget(self.entry_analogGain, 1,1)
         grid_ctrl.addWidget(QLabel('Pixel Format'), 2,0)
         grid_ctrl.addWidget(self.dropdown_pixelFormat, 2,1)
 
@@ -114,7 +113,7 @@ class CameraSettingsWidget(QFrame):
 class LiveControlWidget(QFrame):
     signal_newExposureTime = Signal(float)
     signal_newAnalogGain = Signal(float)
-    def __init__(self, streamHandler, liveController, configurationManager = None, main=None, *args, **kwargs):
+    def __init__(self, streamHandler, liveController, configurationManager=None, show_trigger_options=True, show_display_options=True, main=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.liveController = liveController
         self.streamHandler = streamHandler
@@ -128,13 +127,13 @@ class LiveControlWidget(QFrame):
         # note that this references the object in self.configurationManager.configurations
         self.currentConfiguration = self.configurationManager.configurations[0]
 
-        self.add_components()
+        self.add_components(show_trigger_options,show_display_options)
         self.setFrameStyle(QFrame.Panel | QFrame.Raised)
         self.update_microscope_mode_by_name(self.currentConfiguration.name)
 
         self.is_switching_mode = False # flag used to prevent from settings being set by twice - from both mode change slot and value change slot; another way is to use blockSignals(True)
 
-    def add_components(self):
+    def add_components(self,show_trigger_options,show_display_options):
         # line 0: trigger mode
         self.triggerMode = None
         self.dropdown_triggerManu = QComboBox()
@@ -196,7 +195,7 @@ class LiveControlWidget(QFrame):
         self.slider_resolutionScaling.setTickPosition(QSlider.TicksBelow)
         self.slider_resolutionScaling.setMinimum(10)
         self.slider_resolutionScaling.setMaximum(100)
-        self.slider_resolutionScaling.setValue(50)
+        self.slider_resolutionScaling.setValue(DEFAULT_DISPLAY_CROP)
         self.slider_resolutionScaling.setSingleStep(10)
 
         # connections
@@ -243,11 +242,13 @@ class LiveControlWidget(QFrame):
         grid_line3.addWidget(self.slider_resolutionScaling,0,3)
 
         self.grid = QGridLayout()
-        self.grid.addLayout(grid_line0,0,0)
+        if show_trigger_options:
+            self.grid.addLayout(grid_line0,0,0)
         self.grid.addLayout(grid_line1,1,0)
         self.grid.addLayout(grid_line2,2,0)
         self.grid.addLayout(grid_line4,3,0)
-        self.grid.addLayout(grid_line3,4,0)
+        if show_display_options:
+            self.grid.addLayout(grid_line3,4,0)
         self.setLayout(self.grid)
 
     def toggle_live(self,pressed):
@@ -296,7 +297,6 @@ class LiveControlWidget(QFrame):
     def set_microscope_mode(self,config):
         # self.liveController.set_microscope_mode(config)
         self.dropdown_modeSelection.setCurrentText(config.name)
-
 
 class RecordingWidget(QFrame):
     def __init__(self, streamHandler, imageSaver, main=None, *args, **kwargs):
@@ -421,6 +421,12 @@ class NavigationWidget(QFrame):
         self.btn_moveX_forward.setDefault(False)
         self.btn_moveX_backward = QPushButton('Backward')
         self.btn_moveX_backward.setDefault(False)
+
+        self.btn_home_X = QPushButton('Home X')
+        self.btn_home_X.setDefault(False)
+        self.btn_home_X.setEnabled(HOMING_ENABLED_X)
+        self.btn_zero_X = QPushButton('Zero X')
+        self.btn_zero_X.setDefault(False)
         
         self.label_Ypos = QLabel()
         self.label_Ypos.setNum(0)
@@ -436,6 +442,12 @@ class NavigationWidget(QFrame):
         self.btn_moveY_backward = QPushButton('Backward')
         self.btn_moveY_backward.setDefault(False)
 
+        self.btn_home_Y = QPushButton('Home Y')
+        self.btn_home_Y.setDefault(False)
+        self.btn_home_Y.setEnabled(HOMING_ENABLED_Y)
+        self.btn_zero_Y = QPushButton('Zero Y')
+        self.btn_zero_Y.setDefault(False)
+
         self.label_Zpos = QLabel()
         self.label_Zpos.setNum(0)
         self.label_Zpos.setFrameStyle(QFrame.Panel | QFrame.Sunken)
@@ -449,6 +461,12 @@ class NavigationWidget(QFrame):
         self.btn_moveZ_forward.setDefault(False)
         self.btn_moveZ_backward = QPushButton('Backward')
         self.btn_moveZ_backward.setDefault(False)
+
+        self.btn_home_Z = QPushButton('Home Z')
+        self.btn_home_Z.setDefault(False)
+        self.btn_home_Z.setEnabled(HOMING_ENABLED_Z)
+        self.btn_zero_Z = QPushButton('Zero Z')
+        self.btn_zero_Z.setDefault(False)
         
         grid_line0 = QGridLayout()
         grid_line0.addWidget(QLabel('X (mm)'), 0,0)
@@ -456,7 +474,7 @@ class NavigationWidget(QFrame):
         grid_line0.addWidget(self.entry_dX, 0,2)
         grid_line0.addWidget(self.btn_moveX_forward, 0,3)
         grid_line0.addWidget(self.btn_moveX_backward, 0,4)
-
+        
         grid_line1 = QGridLayout()
         grid_line1.addWidget(QLabel('Y (mm)'), 0,0)
         grid_line1.addWidget(self.label_Ypos, 0,1)
@@ -470,11 +488,20 @@ class NavigationWidget(QFrame):
         grid_line2.addWidget(self.entry_dZ, 0,2)
         grid_line2.addWidget(self.btn_moveZ_forward, 0,3)
         grid_line2.addWidget(self.btn_moveZ_backward, 0,4)
+        
+        grid_line3 = QGridLayout()
+        grid_line3.addWidget(self.btn_zero_X, 0,3)
+        grid_line3.addWidget(self.btn_zero_Y, 0,4)
+        grid_line3.addWidget(self.btn_zero_Z, 0,5)
+        grid_line3.addWidget(self.btn_home_X, 0,0)
+        grid_line3.addWidget(self.btn_home_Y, 0,1)
+        grid_line3.addWidget(self.btn_home_Z, 0,2)
 
         self.grid = QGridLayout()
         self.grid.addLayout(grid_line0,0,0)
         self.grid.addLayout(grid_line1,1,0)
         self.grid.addLayout(grid_line2,2,0)
+        self.grid.addLayout(grid_line3,3,0)
         self.setLayout(self.grid)
 
         self.entry_dX.valueChanged.connect(self.set_deltaX)
@@ -487,10 +514,16 @@ class NavigationWidget(QFrame):
         self.btn_moveY_backward.clicked.connect(self.move_y_backward)
         self.btn_moveZ_forward.clicked.connect(self.move_z_forward)
         self.btn_moveZ_backward.clicked.connect(self.move_z_backward)
+
+        self.btn_home_X.clicked.connect(self.home_x)
+        self.btn_home_Y.clicked.connect(self.home_y)
+        self.btn_home_Z.clicked.connect(self.home_z)
+        self.btn_zero_X.clicked.connect(self.zero_x)
+        self.btn_zero_Y.clicked.connect(self.zero_y)
+        self.btn_zero_Z.clicked.connect(self.zero_z)
         
     def move_x_forward(self):
         self.navigationController.move_x(self.entry_dX.value())
-        print('move x')
     def move_x_backward(self):
         self.navigationController.move_x(-self.entry_dX.value())
     def move_y_forward(self):
@@ -500,17 +533,126 @@ class NavigationWidget(QFrame):
     def move_z_forward(self):
         self.navigationController.move_z(self.entry_dZ.value()/1000)
     def move_z_backward(self):
-        self.navigationController.move_z(-self.entry_dZ.value()/1000)
+        self.navigationController.move_z(-self.entry_dZ.value()/1000) 
 
     def set_deltaX(self,value):
-        deltaX = round(value*Motion.STEPS_PER_MM_XY)/Motion.STEPS_PER_MM_XY
+        mm_per_ustep = SCREW_PITCH_X_MM/(self.navigationController.x_microstepping*FULLSTEPS_PER_REV_X) # to implement a get_x_microstepping() in multipointController
+        deltaX = round(value/mm_per_ustep)*mm_per_ustep
         self.entry_dX.setValue(deltaX)
     def set_deltaY(self,value):
-        deltaY = round(value*Motion.STEPS_PER_MM_XY)/Motion.STEPS_PER_MM_XY
+        mm_per_ustep = SCREW_PITCH_Y_MM/(self.navigationController.y_microstepping*FULLSTEPS_PER_REV_Y)
+        deltaY = round(value/mm_per_ustep)*mm_per_ustep
         self.entry_dY.setValue(deltaY)
     def set_deltaZ(self,value):
-        deltaZ = round(value/1000*Motion.STEPS_PER_MM_Z)/(Motion.STEPS_PER_MM_Z/1000)
+        mm_per_ustep = SCREW_PITCH_Z_MM/(self.navigationController.z_microstepping*FULLSTEPS_PER_REV_Z)
+        deltaZ = round(value/1000/mm_per_ustep)*mm_per_ustep*1000
         self.entry_dZ.setValue(deltaZ)
+
+    def home_x(self):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Confirm your action")
+        msg.setInformativeText("Click OK to run homing")
+        msg.setWindowTitle("Confirmation")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.setDefaultButton(QMessageBox.Cancel)
+        retval = msg.exec_()
+        if QMessageBox.Ok == retval:
+            self.navigationController.home_x()
+
+    def home_y(self):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Confirm your action")
+        msg.setInformativeText("Click OK to run homing")
+        msg.setWindowTitle("Confirmation")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.setDefaultButton(QMessageBox.Cancel)
+        retval = msg.exec_()
+        if QMessageBox.Ok == retval:
+            self.navigationController.home_y()
+
+    def home_z(self):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Confirm your action")
+        msg.setInformativeText("Click OK to run homing")
+        msg.setWindowTitle("Confirmation")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.setDefaultButton(QMessageBox.Cancel)
+        retval = msg.exec_()
+        if QMessageBox.Ok == retval:
+            self.navigationController.home_z()
+
+    def zero_x(self):
+        self.navigationController.zero_x()
+
+    def zero_y(self):
+        self.navigationController.zero_y()
+
+    def zero_z(self):
+        self.navigationController.zero_z()
+
+class DACControWidget(QFrame):
+    def __init__(self, microcontroller ,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.microcontroller = microcontroller
+        self.add_components()
+        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+
+    def add_components(self):
+        self.slider_DAC0 = QSlider(Qt.Horizontal)
+        self.slider_DAC0.setTickPosition(QSlider.TicksBelow)
+        self.slider_DAC0.setMinimum(0)
+        self.slider_DAC0.setMaximum(100)
+        self.slider_DAC0.setSingleStep(0.1)
+        self.slider_DAC0.setValue(0)
+
+        self.entry_DAC0 = QDoubleSpinBox()
+        self.entry_DAC0.setMinimum(0) 
+        self.entry_DAC0.setMaximum(100) 
+        self.entry_DAC0.setSingleStep(0.1)
+        self.entry_DAC0.setValue(0)
+
+        self.slider_DAC1 = QSlider(Qt.Horizontal)
+        self.slider_DAC1.setTickPosition(QSlider.TicksBelow)
+        self.slider_DAC1.setMinimum(0)
+        self.slider_DAC1.setMaximum(100)
+        self.slider_DAC1.setValue(0)
+        self.slider_DAC1.setSingleStep(0.1)
+
+        self.entry_DAC1 = QDoubleSpinBox()
+        self.entry_DAC1.setMinimum(0) 
+        self.entry_DAC1.setMaximum(100) 
+        self.entry_DAC1.setSingleStep(0.1)
+        self.entry_DAC1.setValue(0)
+
+        # connections
+        self.entry_DAC0.valueChanged.connect(self.set_DAC0)
+        self.entry_DAC0.valueChanged.connect(self.slider_DAC0.setValue)
+        self.slider_DAC0.valueChanged.connect(self.entry_DAC0.setValue)
+        self.entry_DAC1.valueChanged.connect(self.set_DAC1)
+        self.entry_DAC1.valueChanged.connect(self.slider_DAC1.setValue)
+        self.slider_DAC1.valueChanged.connect(self.entry_DAC1.setValue)
+
+        # layout
+        grid_line1 = QGridLayout()
+        grid_line1.addWidget(QLabel('DAC0'), 0,0)
+        grid_line1.addWidget(self.slider_DAC0, 0,1)
+        grid_line1.addWidget(self.entry_DAC0, 0,2)
+        grid_line1.addWidget(QLabel('DAC1'), 1,0)
+        grid_line1.addWidget(self.slider_DAC1, 1,1)
+        grid_line1.addWidget(self.entry_DAC1, 1,2)
+
+        self.grid = QGridLayout()
+        self.grid.addLayout(grid_line1,1,0)
+        self.setLayout(self.grid)
+
+    def set_DAC0(self,value):
+        self.microcontroller.analog_write_onboard_DAC(0,int(value*65535/100))
+
+    def set_DAC1(self,value):
+        self.microcontroller.analog_write_onboard_DAC(1,int(value*65535/100))
 
 class AutoFocusWidget(QFrame):
     def __init__(self, autofocusController, main=None, *args, **kwargs):
@@ -521,12 +663,12 @@ class AutoFocusWidget(QFrame):
 
     def add_components(self):
         self.entry_delta = QDoubleSpinBox()
-        self.entry_delta.setMinimum(0.2) 
+        self.entry_delta.setMinimum(0) 
         self.entry_delta.setMaximum(20) 
         self.entry_delta.setSingleStep(0.2)
-        self.entry_delta.setValue(3)
         self.entry_delta.setDecimals(3)
-        self.autofocusController.set_deltaZ(3)
+        self.entry_delta.setValue(1.524)
+        self.autofocusController.set_deltaZ(1.524)
 
         self.entry_N = QSpinBox()
         self.entry_N.setMinimum(3) 
@@ -559,7 +701,8 @@ class AutoFocusWidget(QFrame):
         self.autofocusController.autofocusFinished.connect(self.autofocus_is_finished)
 
     def set_deltaZ(self,value):
-        deltaZ = round(value/1000*Motion.STEPS_PER_MM_Z)/(Motion.STEPS_PER_MM_Z/1000)
+        mm_per_ustep = SCREW_PITCH_Z_MM/(self.autofocusController.navigationController.z_microstepping*FULLSTEPS_PER_REV_Z)
+        deltaZ = round(value/1000/mm_per_ustep)*mm_per_ustep*1000
         self.entry_delta.setValue(deltaZ)
         self.autofocusController.set_deltaZ(deltaZ)
 
@@ -629,9 +772,9 @@ class MultiPointWidget(QFrame):
 
         self.entry_dt = QDoubleSpinBox()
         self.entry_dt.setMinimum(0) 
-        self.entry_dt.setMaximum(3600) 
+        self.entry_dt.setMaximum(12*3600) 
         self.entry_dt.setSingleStep(1)
-        self.entry_dt.setValue(1)
+        self.entry_dt.setValue(0)
 
         self.entry_Nt = QSpinBox()
         self.entry_Nt.setMinimum(1) 
@@ -708,17 +851,20 @@ class MultiPointWidget(QFrame):
         self.multipointController.acquisitionFinished.connect(self.acquisition_is_finished)
 
     def set_deltaX(self,value):
-        deltaX = round(value*Motion.STEPS_PER_MM_XY)/Motion.STEPS_PER_MM_XY
+        mm_per_ustep = SCREW_PITCH_X_MM/(self.multipointController.navigationController.x_microstepping*FULLSTEPS_PER_REV_X) # to implement a get_x_microstepping() in multipointController
+        deltaX = round(value/mm_per_ustep)*mm_per_ustep
         self.entry_deltaX.setValue(deltaX)
         self.multipointController.set_deltaX(deltaX)
 
     def set_deltaY(self,value):
-        deltaY = round(value*Motion.STEPS_PER_MM_XY)/Motion.STEPS_PER_MM_XY
+        mm_per_ustep = SCREW_PITCH_Y_MM/(self.multipointController.navigationController.y_microstepping*FULLSTEPS_PER_REV_Y)
+        deltaY = round(value/mm_per_ustep)*mm_per_ustep
         self.entry_deltaY.setValue(deltaY)
         self.multipointController.set_deltaY(deltaY)
 
     def set_deltaZ(self,value):
-        deltaZ = round(value/1000*Motion.STEPS_PER_MM_Z)/(Motion.STEPS_PER_MM_Z/1000)
+        mm_per_ustep = SCREW_PITCH_Z_MM/(self.multipointController.navigationController.z_microstepping*FULLSTEPS_PER_REV_Z)
+        deltaZ = round(value/1000/mm_per_ustep)*mm_per_ustep*1000
         self.entry_deltaZ.setValue(deltaZ)
         self.multipointController.set_deltaZ(deltaZ)
 
@@ -745,13 +891,14 @@ class MultiPointWidget(QFrame):
             self.multipointController.run_acquisition()
         else:
             # self.multipointController.stop_acquisition() # to implement
-            self.setEnabled_all(True)
+            # self.setEnabled_all(True)
+            pass
 
     def acquisition_is_finished(self):
         self.btn_startAcquisition.setChecked(False)
         self.setEnabled_all(True)
 
-    def setEnabled_all(self,enabled,exclude_btn_startAcquisition=True):
+    def setEnabled_all(self,enabled,exclude_btn_startAcquisition=False):
         self.btn_setSavingDir.setEnabled(enabled)
         self.lineEdit_savingDir.setEnabled(enabled)
         self.lineEdit_experimentID.setEnabled(enabled)
@@ -769,10 +916,428 @@ class MultiPointWidget(QFrame):
             self.btn_startAcquisition.setEnabled(enabled)
 
 class TrackingControllerWidget(QFrame):
-    def __init__(self, multipointController, navigationController, main=None, *args, **kwargs):
+    def __init__(self, trackingController, configurationManager, show_configurations = True, main=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.multipointController = multipointController
-        self.navigationController = navigationController
+        self.trackingController = trackingController
+        self.configurationManager = configurationManager
         self.base_path_is_set = False
-        # self.add_components()
+        self.add_components(show_configurations)
         self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+
+    def add_components(self,show_configurations):
+        self.btn_setSavingDir = QPushButton('Browse')
+        self.btn_setSavingDir.setDefault(False)
+        self.btn_setSavingDir.setIcon(QIcon('icon/folder.png'))
+        self.lineEdit_savingDir = QLineEdit()
+        self.lineEdit_savingDir.setReadOnly(True)
+        self.lineEdit_savingDir.setText('Choose a base saving directory')
+        self.lineEdit_savingDir.setText(DEFAULT_SAVING_PATH)
+        self.trackingController.set_base_path(DEFAULT_SAVING_PATH)
+        self.base_path_is_set = True
+
+        self.lineEdit_experimentID = QLineEdit()
+
+        self.dropdown_objective = QComboBox()
+        self.dropdown_objective.addItems(list(OBJECTIVES.keys()))
+        self.dropdown_objective.setCurrentText(DEFAULT_OBJECTIVE)
+
+        self.dropdown_tracker = QComboBox()
+        self.dropdown_tracker.addItems(TRACKERS)
+        self.dropdown_tracker.setCurrentText(DEFAULT_TRACKER)
+
+        self.entry_tracking_interval = QDoubleSpinBox()
+        self.entry_tracking_interval.setMinimum(0) 
+        self.entry_tracking_interval.setMaximum(30) 
+        self.entry_tracking_interval.setSingleStep(0.5)
+        self.entry_tracking_interval.setValue(0)
+
+        self.list_configurations = QListWidget()
+        for microscope_configuration in self.configurationManager.configurations:
+            self.list_configurations.addItems([microscope_configuration.name])
+        self.list_configurations.setSelectionMode(QAbstractItemView.MultiSelection) # ref: https://doc.qt.io/qt-5/qabstractitemview.html#SelectionMode-enum
+
+        self.checkbox_withAutofocus = QCheckBox('With AF')
+        self.checkbox_saveImages = QCheckBox('Save Images')
+        self.btn_track = QPushButton('Start Tracking')
+        self.btn_track.setCheckable(True)
+        self.btn_track.setChecked(False)
+
+        self.checkbox_enable_stage_tracking = QCheckBox(' Enable Stage Tracking')
+        self.checkbox_enable_stage_tracking.setChecked(True)
+
+        # layout
+        grid_line0 = QGridLayout()
+        tmp = QLabel('Saving Path')
+        tmp.setFixedWidth(90)
+        grid_line0.addWidget(tmp, 0,0)
+        grid_line0.addWidget(self.lineEdit_savingDir, 0,1, 1,2)
+        grid_line0.addWidget(self.btn_setSavingDir, 0,3)
+        tmp = QLabel('Experiment ID')
+        tmp.setFixedWidth(90)
+        grid_line0.addWidget(tmp, 1,0)
+        grid_line0.addWidget(self.lineEdit_experimentID, 1,1, 1,1)
+        tmp = QLabel('Objective')
+        tmp.setFixedWidth(90)
+        grid_line0.addWidget(tmp,1,2)
+        grid_line0.addWidget(self.dropdown_objective, 1,3)
+
+        grid_line3 = QHBoxLayout()
+        tmp = QLabel('Configurations')
+        tmp.setFixedWidth(90)
+        grid_line3.addWidget(tmp)
+        grid_line3.addWidget(self.list_configurations)
+        
+        grid_line1 = QHBoxLayout()
+        tmp = QLabel('Tracker')
+        grid_line1.addWidget(tmp)
+        grid_line1.addWidget(self.dropdown_tracker)
+        tmp = QLabel('Tracking Interval (s)')
+        grid_line1.addWidget(tmp)
+        grid_line1.addWidget(self.entry_tracking_interval)
+        grid_line1.addWidget(self.checkbox_withAutofocus)
+        grid_line1.addWidget(self.checkbox_saveImages)
+
+        grid_line4 = QGridLayout()
+        grid_line4.addWidget(self.btn_track,0,0,1,3)
+        grid_line4.addWidget(self.checkbox_enable_stage_tracking,0,4)
+
+        self.grid = QVBoxLayout()
+        self.grid.addLayout(grid_line0)
+        if show_configurations:
+            self.grid.addLayout(grid_line3)
+        else:
+            self.list_configurations.setCurrentRow(0) # select the first configuration
+        self.grid.addLayout(grid_line1)        
+        self.grid.addLayout(grid_line4)
+        self.grid.addStretch()
+        self.setLayout(self.grid)
+
+        # connections - buttons, checkboxes, entries
+        self.checkbox_enable_stage_tracking.stateChanged.connect(self.trackingController.toggle_stage_tracking)
+        self.checkbox_withAutofocus.stateChanged.connect(self.trackingController.toggel_enable_af)
+        self.checkbox_saveImages.stateChanged.connect(self.trackingController.toggel_save_images)
+        self.entry_tracking_interval.valueChanged.connect(self.trackingController.set_tracking_time_interval)
+        self.btn_setSavingDir.clicked.connect(self.set_saving_dir)
+        self.btn_track.clicked.connect(self.toggle_acquisition)
+        # connections - selections and entries
+        self.dropdown_tracker.currentIndexChanged.connect(self.update_tracker)
+        self.dropdown_objective.currentIndexChanged.connect(self.update_pixel_size)
+        # controller to widget
+        self.trackingController.signal_tracking_stopped.connect(self.slot_tracking_stopped)
+
+        # run initialization functions
+        self.update_pixel_size()
+        self.trackingController.update_image_resizing_factor(1) # to add: image resizing slider
+
+    def slot_joystick_button_pressed(self):
+        self.btn_track.toggle()
+        if self.btn_track.isChecked():
+            if self.base_path_is_set == False:
+                self.btn_track.setChecked(False)
+                msg = QMessageBox()
+                msg.setText("Please choose base saving directory first")
+                msg.exec_()
+                return
+            self.setEnabled_all(False)
+            self.trackingController.start_new_experiment(self.lineEdit_experimentID.text())
+            self.trackingController.set_selected_configurations((item.text() for item in self.list_configurations.selectedItems()))
+            self.trackingController.start_tracking()
+        else:
+            self.trackingController.stop_tracking()
+
+    def slot_tracking_stopped(self):
+        self.btn_track.setChecked(False)
+        self.setEnabled_all(True)
+        print('tracking stopped')
+
+    def set_saving_dir(self):
+        dialog = QFileDialog()
+        save_dir_base = dialog.getExistingDirectory(None, "Select Folder")
+        self.trackingController.set_base_path(save_dir_base)
+        self.lineEdit_savingDir.setText(save_dir_base)
+        self.base_path_is_set = True 
+
+    def toggle_acquisition(self,pressed):
+        if pressed:
+            if self.base_path_is_set == False:
+                self.btn_track.setChecked(False)
+                msg = QMessageBox()
+                msg.setText("Please choose base saving directory first")
+                msg.exec_()
+                return
+            # @@@ to do: add a widgetManger to enable and disable widget 
+            # @@@ to do: emit signal to widgetManager to disable other widgets
+            self.setEnabled_all(False)
+            self.trackingController.start_new_experiment(self.lineEdit_experimentID.text())
+            self.trackingController.set_selected_configurations((item.text() for item in self.list_configurations.selectedItems()))
+            self.trackingController.start_tracking()
+        else:
+            self.trackingController.stop_tracking()
+
+    def setEnabled_all(self,enabled):
+        self.btn_setSavingDir.setEnabled(enabled)
+        self.lineEdit_savingDir.setEnabled(enabled)
+        self.lineEdit_experimentID.setEnabled(enabled)
+        self.dropdown_tracker
+        self.dropdown_objective
+        self.list_configurations.setEnabled(enabled)
+
+    def update_tracker(self, index):
+        self.trackingController.update_tracker_selection(self.dropdown_tracker.currentText())
+
+    def update_pixel_size(self): 
+        objective = self.dropdown_objective.currentText()
+        self.trackingController.objective = objective
+        # self.internal_state.data['Objective'] = self.objective
+        pixel_size_um = CAMERA_PIXEL_SIZE_UM[CAMERA_SENSOR] / ( TUBE_LENS_MM/ (OBJECTIVES[objective]['tube_lens_f_mm']/OBJECTIVES[objective]['magnification']) )
+        self.trackingController.update_pixel_size(pixel_size_um)
+        print('pixel size is ' + str(pixel_size_um) + ' um')
+
+
+    '''
+        # connections
+        self.checkbox_withAutofocus.stateChanged.connect(self.trackingController.set_af_flag)
+        self.btn_setSavingDir.clicked.connect(self.set_saving_dir)
+        self.btn_startAcquisition.clicked.connect(self.toggle_acquisition)
+        self.trackingController.trackingStopped.connect(self.acquisition_is_finished)
+
+    def set_saving_dir(self):
+        dialog = QFileDialog()
+        save_dir_base = dialog.getExistingDirectory(None, "Select Folder")
+        self.plateReadingController.set_base_path(save_dir_base)
+        self.lineEdit_savingDir.setText(save_dir_base)
+        self.base_path_is_set = True
+
+    def toggle_acquisition(self,pressed):
+        if self.base_path_is_set == False:
+            self.btn_startAcquisition.setChecked(False)
+            msg = QMessageBox()
+            msg.setText("Please choose base saving directory first")
+            msg.exec_()
+            return
+        if pressed:
+            # @@@ to do: add a widgetManger to enable and disable widget 
+            # @@@ to do: emit signal to widgetManager to disable other widgets
+            self.setEnabled_all(False)
+            self.trackingController.start_new_experiment(self.lineEdit_experimentID.text())
+            self.trackingController.set_selected_configurations((item.text() for item in self.list_configurations.selectedItems()))
+            self.trackingController.set_selected_columns(list(map(int,[item.text() for item in self.list_columns.selectedItems()])))
+            self.trackingController.run_acquisition()
+        else:
+            self.trackingController.stop_acquisition() # to implement
+            pass
+
+    def acquisition_is_finished(self):
+        self.btn_startAcquisition.setChecked(False)
+        self.setEnabled_all(True)
+
+    def setEnabled_all(self,enabled,exclude_btn_startAcquisition=False):
+        self.btn_setSavingDir.setEnabled(enabled)
+        self.lineEdit_savingDir.setEnabled(enabled)
+        self.lineEdit_experimentID.setEnabled(enabled)
+        self.list_columns.setEnabled(enabled)
+        self.list_configurations.setEnabled(enabled)
+        self.checkbox_withAutofocus.setEnabled(enabled)
+        if exclude_btn_startAcquisition is not True:
+            self.btn_startAcquisition.setEnabled(enabled)
+    '''
+
+class PlateReaderAcquisitionWidget(QFrame):
+    def __init__(self, plateReadingController, configurationManager = None, show_configurations = True, main=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.plateReadingController = plateReadingController
+        self.configurationManager = configurationManager
+        self.base_path_is_set = False
+        self.add_components(show_configurations)
+        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+
+    def add_components(self,show_configurations):
+        self.btn_setSavingDir = QPushButton('Browse')
+        self.btn_setSavingDir.setDefault(False)
+        self.btn_setSavingDir.setIcon(QIcon('icon/folder.png'))
+        self.lineEdit_savingDir = QLineEdit()
+        self.lineEdit_savingDir.setReadOnly(True)
+        self.lineEdit_savingDir.setText('Choose a base saving directory')
+        self.lineEdit_savingDir.setText(DEFAULT_SAVING_PATH)
+        self.plateReadingController.set_base_path(DEFAULT_SAVING_PATH)
+        self.base_path_is_set = True
+
+        self.lineEdit_experimentID = QLineEdit()
+
+        self.list_columns = QListWidget()
+        for i in range(PLATE_READER.NUMBER_OF_COLUMNS):
+            self.list_columns.addItems([str(i+1)])
+        self.list_columns.setSelectionMode(QAbstractItemView.MultiSelection) # ref: https://doc.qt.io/qt-5/qabstractitemview.html#SelectionMode-enum
+
+        self.list_configurations = QListWidget()
+        for microscope_configuration in self.configurationManager.configurations:
+            self.list_configurations.addItems([microscope_configuration.name])
+        self.list_configurations.setSelectionMode(QAbstractItemView.MultiSelection) # ref: https://doc.qt.io/qt-5/qabstractitemview.html#SelectionMode-enum
+
+        self.checkbox_withAutofocus = QCheckBox('With AF')
+        self.btn_startAcquisition = QPushButton('Start Acquisition')
+        self.btn_startAcquisition.setCheckable(True)
+        self.btn_startAcquisition.setChecked(False)
+
+        self.btn_startAcquisition.setEnabled(False)
+
+        # layout
+        grid_line0 = QGridLayout()
+        tmp = QLabel('Saving Path')
+        tmp.setFixedWidth(90)
+        grid_line0.addWidget(tmp)
+        grid_line0.addWidget(self.lineEdit_savingDir, 0,1)
+        grid_line0.addWidget(self.btn_setSavingDir, 0,2)
+
+        grid_line1 = QGridLayout()
+        tmp = QLabel('Sample ID')
+        tmp.setFixedWidth(90)
+        grid_line1.addWidget(tmp)
+        grid_line1.addWidget(self.lineEdit_experimentID,0,1)
+
+        grid_line2 = QGridLayout()
+        tmp = QLabel('Columns')
+        tmp.setFixedWidth(90)
+        grid_line2.addWidget(tmp)
+        grid_line2.addWidget(self.list_columns, 0,1)
+
+        grid_line3 = QHBoxLayout()
+        tmp = QLabel('Configurations')
+        tmp.setFixedWidth(90)
+        grid_line3.addWidget(tmp)
+        grid_line3.addWidget(self.list_configurations)
+        # grid_line3.addWidget(self.checkbox_withAutofocus)
+
+        self.grid = QGridLayout()
+        self.grid.addLayout(grid_line0,0,0)
+        self.grid.addLayout(grid_line1,1,0)
+        self.grid.addLayout(grid_line2,2,0)
+        if show_configurations:
+            self.grid.addLayout(grid_line3,3,0)
+        else:
+            self.list_configurations.setCurrentRow(0) # select the first configuration
+        self.grid.addWidget(self.btn_startAcquisition,4,0)
+        self.setLayout(self.grid)
+
+        # add and display a timer - to be implemented
+        # self.timer = QTimer()
+
+        # connections
+        self.checkbox_withAutofocus.stateChanged.connect(self.plateReadingController.set_af_flag)
+        self.btn_setSavingDir.clicked.connect(self.set_saving_dir)
+        self.btn_startAcquisition.clicked.connect(self.toggle_acquisition)
+        self.plateReadingController.acquisitionFinished.connect(self.acquisition_is_finished)
+
+    def set_saving_dir(self):
+        dialog = QFileDialog()
+        save_dir_base = dialog.getExistingDirectory(None, "Select Folder")
+        self.plateReadingController.set_base_path(save_dir_base)
+        self.lineEdit_savingDir.setText(save_dir_base)
+        self.base_path_is_set = True
+
+    def toggle_acquisition(self,pressed):
+        if self.base_path_is_set == False:
+            self.btn_startAcquisition.setChecked(False)
+            msg = QMessageBox()
+            msg.setText("Please choose base saving directory first")
+            msg.exec_()
+            return
+        if pressed:
+            # @@@ to do: add a widgetManger to enable and disable widget 
+            # @@@ to do: emit signal to widgetManager to disable other widgets
+            self.setEnabled_all(False)
+            self.plateReadingController.start_new_experiment(self.lineEdit_experimentID.text())
+            self.plateReadingController.set_selected_configurations((item.text() for item in self.list_configurations.selectedItems()))
+            self.plateReadingController.set_selected_columns(list(map(int,[item.text() for item in self.list_columns.selectedItems()])))
+            self.plateReadingController.run_acquisition()
+        else:
+            self.plateReadingController.stop_acquisition() # to implement
+            pass
+
+    def acquisition_is_finished(self):
+        self.btn_startAcquisition.setChecked(False)
+        self.setEnabled_all(True)
+
+    def setEnabled_all(self,enabled,exclude_btn_startAcquisition=False):
+        self.btn_setSavingDir.setEnabled(enabled)
+        self.lineEdit_savingDir.setEnabled(enabled)
+        self.lineEdit_experimentID.setEnabled(enabled)
+        self.list_columns.setEnabled(enabled)
+        self.list_configurations.setEnabled(enabled)
+        self.checkbox_withAutofocus.setEnabled(enabled)
+        if exclude_btn_startAcquisition is not True:
+            self.btn_startAcquisition.setEnabled(enabled)
+
+    def slot_homing_complete(self):
+        self.btn_startAcquisition.setEnabled(True)
+    
+class PlateReaderNavigationWidget(QFrame):
+    def __init__(self, plateReaderNavigationController, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_components()
+        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+        self.plateReaderNavigationController = plateReaderNavigationController
+
+    def add_components(self):
+        self.dropdown_column = QComboBox()
+        self.dropdown_column.addItems([''])
+        self.dropdown_column.addItems([str(i+1) for i in range(PLATE_READER.NUMBER_OF_COLUMNS)])
+        self.dropdown_row = QComboBox()
+        self.dropdown_row.addItems([''])
+        self.dropdown_row.addItems([chr(i) for i in range(ord('A'),ord('A')+PLATE_READER.NUMBER_OF_ROWS)])
+        self.btn_moveto = QPushButton("Move To")
+        self.btn_home = QPushButton('Home')
+        self.label_current_location = QLabel()
+        self.label_current_location.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+        self.label_current_location.setFixedWidth(50)
+
+        self.dropdown_column.setEnabled(False)
+        self.dropdown_row.setEnabled(False)
+        self.btn_moveto.setEnabled(False)
+        
+        # layout
+        grid_line0 = QHBoxLayout()
+        # tmp = QLabel('Saving Path')
+        # tmp.setFixedWidth(90)
+        grid_line0.addWidget(self.btn_home)
+        grid_line0.addWidget(QLabel('Column'))
+        grid_line0.addWidget(self.dropdown_column)
+        grid_line0.addWidget(QLabel('Row'))
+        grid_line0.addWidget(self.dropdown_row)
+        grid_line0.addWidget(self.btn_moveto)
+        grid_line0.addStretch()
+        grid_line0.addWidget(self.label_current_location)
+
+        self.grid = QGridLayout()
+        self.grid.addLayout(grid_line0,0,0)
+        self.setLayout(self.grid)
+
+        self.btn_home.clicked.connect(self.home)
+        self.btn_moveto.clicked.connect(self.move)
+
+    def home(self):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Confirm your action")
+        msg.setInformativeText("Click OK to run homing")
+        msg.setWindowTitle("Confirmation")
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.setDefaultButton(QMessageBox.Cancel)
+        retval = msg.exec_()
+        if QMessageBox.Ok == retval:
+            self.plateReaderNavigationController.home()
+
+    def move(self):
+        self.plateReaderNavigationController.moveto(self.dropdown_column.currentText(),self.dropdown_row.currentText())
+
+    def slot_homing_complete(self):
+        self.dropdown_column.setEnabled(True)
+        self.dropdown_row.setEnabled(True)
+        self.btn_moveto.setEnabled(True)
+
+    def update_current_location(self,location_str):
+        self.label_current_location.setText(location_str)
+        row = location_str[0]
+        column = location_str[1:]
+        self.dropdown_row.setCurrentText(row)
+        self.dropdown_column.setCurrentText(column)
