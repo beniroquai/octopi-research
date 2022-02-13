@@ -4,7 +4,7 @@
 #include <AccelStepper.h>
 #include <Adafruit_DotStar.h>
 #include <SPI.h>
-#include "def.h"
+#include "def_octopi.h"
 //#include "def_gravitymachine.h"
 //#include "def_squid.h"
 //#include "def_platereader.h"
@@ -36,12 +36,19 @@ static const int HOME_OR_ZERO = 5;
 static const int MOVETO_X = 6;
 static const int MOVETO_Y = 7;
 static const int MOVETO_Z = 8;
+static const int SET_LIM = 9;
 static const int TURN_ON_ILLUMINATION = 10;
 static const int TURN_OFF_ILLUMINATION = 11;
 static const int SET_ILLUMINATION = 12;
 static const int SET_ILLUMINATION_LED_MATRIX = 13;
 static const int ACK_JOYSTICK_BUTTON_PRESSED = 14;
 static const int ANALOG_WRITE_ONBOARD_DAC = 15;
+static const int SET_LIM_SWITCH_POLARITY = 20;
+static const int CONFIGURE_STEPPER_DRIVER = 21;
+static const int SET_MAX_VELOCITY_ACCELERATION = 22;
+static const int SET_LEAD_SCREW_PITCH = 23;
+static const int SEND_HARDWARE_TRIGGER = 30;
+static const int SET_STROBE_DELAY = 31;
 
 static const int COMPLETED_WITHOUT_ERRORS = 0;
 static const int IN_PROGRESS = 1;
@@ -60,6 +67,17 @@ static const int AXIS_THETA = 3;
 static const int AXES_XY = 4;
 
 static const int BIT_POS_JOYSTICK_BUTTON = 0;
+
+static const int LIM_CODE_X_POSITIVE = 0;
+static const int LIM_CODE_X_NEGATIVE = 1;
+static const int LIM_CODE_Y_POSITIVE = 2;
+static const int LIM_CODE_Y_NEGATIVE = 3;
+static const int LIM_CODE_Z_POSITIVE = 4;
+static const int LIM_CODE_Z_NEGATIVE = 5;
+
+static const int ACTIVE_LOW = 0;
+static const int ACTIVE_HIGH = 1;
+static const int DISABLED = 2;
 
 /***************************************************************************************************/
 /**************************************** Pin definations ******************************************/
@@ -80,6 +98,9 @@ static const int LASER_405nm = 31;
 static const int LASER_488nm = 32;
 static const int LASER_638nm = 33;
 static const int LASER_561nm = 34;
+
+// camera trigger 
+static const int camera_trigger_pins[] = {35,36,37,38,39}; // to replace
 
 // encoders and limit switches
 static const int X_encoder_A = 4;
@@ -112,6 +133,19 @@ bool joystick_not_connected = false;
 
 // rocker switch
 #define rocker 40
+
+/***************************************************************************************************/
+/************************************ camera trigger and strobe ************************************/
+/***************************************************************************************************/
+static const int TRIGGER_PULSE_LENGTH_us = 50;
+bool trigger_output_level[5] = {LOW,LOW,LOW,LOW,LOW};
+bool control_strobe[5] = {false,false,false,false,false};
+bool strobe_output_level[5] = {LOW,LOW,LOW,LOW,LOW};
+bool strobe_on[5] = {false,false,false,false,false};
+int strobe_delay[5] = {0,0,0,0,0};
+long illumination_on_time[5] = {0,0,0,0,0};
+long timestamp_trigger_rising_edge[5] = {0,0,0,0,0};
+// to do: change the number of channels (5) to a named constant
 
 /***************************************************************************************************/
 /******************************************* steppers **********************************************/
@@ -168,6 +202,12 @@ bool homing_direction_Z;
  * used as limit switches. Alternatively, add homing_direction_set variables.
  */
 
+long X_POS_LIMIT = X_POS_LIMIT_MM*steps_per_mm_X;
+long X_NEG_LIMIT = X_NEG_LIMIT_MM*steps_per_mm_X;
+long Y_POS_LIMIT = Y_POS_LIMIT_MM*steps_per_mm_Y;
+long Y_NEG_LIMIT = Y_NEG_LIMIT_MM*steps_per_mm_Y;
+long Z_POS_LIMIT = Z_POS_LIMIT_MM*steps_per_mm_Z;
+long Z_NEG_LIMIT = Z_NEG_LIMIT_MM*steps_per_mm_Z;
 
 /***************************************************************************************************/
 /******************************************* joystick **********************************************/
@@ -216,7 +256,10 @@ static const int ILLUMINATION_SOURCE_LED_ARRAY_FULL = 0;
 static const int ILLUMINATION_SOURCE_LED_ARRAY_LEFT_HALF = 1;
 static const int ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF = 2;
 static const int ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR = 3;
-static const int ILLUMINATION_SOURCE_LED_EXTERNAL_FET = 5;
+static const int ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA = 4;
+static const int ILLUMINATION_SOURCE_LED_EXTERNAL_FET = 20;
+static const int ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT = 5;
+static const int ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT = 6;
 static const int ILLUMINATION_SOURCE_405NM = 11;
 static const int ILLUMINATION_SOURCE_488NM = 12;
 static const int ILLUMINATION_SOURCE_638NM = 13;
@@ -226,6 +269,9 @@ Adafruit_DotStar matrix(DOTSTAR_NUM_LEDS, DOTSTAR_BRG);
 void set_all(Adafruit_DotStar & matrix, int r, int g, int b);
 void set_left(Adafruit_DotStar & matrix, int r, int g, int b);
 void set_right(Adafruit_DotStar & matrix, int r, int g, int b);
+void set_low_na(Adafruit_DotStar & matrix, int r, int g, int b);
+void set_left_dot(Adafruit_DotStar & matrix, int r, int g, int b);
+void set_right_dot(Adafruit_DotStar & matrix, int r, int g, int b);
 void clear_matrix(Adafruit_DotStar & matrix);
 void turn_on_LED_matrix_pattern(Adafruit_DotStar & matrix, int pattern, uint8_t led_matrix_r, uint8_t led_matrix_g, uint8_t led_matrix_b);
 
@@ -245,6 +291,15 @@ void turn_on_illumination()
       break;
     case ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR:
       turn_on_LED_matrix_pattern(matrix,ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR,led_matrix_r,led_matrix_g,led_matrix_b);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA:
+      turn_on_LED_matrix_pattern(matrix,ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA,led_matrix_r,led_matrix_g,led_matrix_b);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT:
+      turn_on_LED_matrix_pattern(matrix,ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT,led_matrix_r,led_matrix_g,led_matrix_b);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT:
+      turn_on_LED_matrix_pattern(matrix,ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT,led_matrix_r,led_matrix_g,led_matrix_b);
       break;
     case ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
       digitalWrite(LED,HIGH);
@@ -278,6 +333,15 @@ void turn_off_illumination()
       clear_matrix(matrix);
       break;
     case ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR:
+      clear_matrix(matrix);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA:
+      clear_matrix(matrix);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT:
+      clear_matrix(matrix);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT:
       clear_matrix(matrix);
       break;
     case ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
@@ -330,6 +394,13 @@ void setup() {
 
 //  pinMode(13, OUTPUT);
 //  digitalWrite(13,LOW);
+
+  // camera trigger pins
+  for(int i=0;i<5;i++)
+  {
+    pinMode(camera_trigger_pins[i], OUTPUT);
+    digitalWrite(camera_trigger_pins[i], LOW);
+  }
   
   // enable pins
   pinMode(LED, OUTPUT);
@@ -370,7 +441,7 @@ void setup() {
   while(!STEPPER_SERIAL);
   X_driver.begin();
   X_driver.I_scale_analog(false);
-  X_driver.rms_current(500); //I_run and holdMultiplier
+  X_driver.rms_current(X_MOTOR_RMS_CURRENT_mA,X_MOTOR_I_HOLD); //I_run and holdMultiplier
   X_driver.microsteps(8);
   X_driver.TPOWERDOWN(2);
   X_driver.pwm_autoscale(true);
@@ -380,7 +451,7 @@ void setup() {
   while(!STEPPER_SERIAL);
   Y_driver.begin();
   Y_driver.I_scale_analog(false);  
-  Y_driver.rms_current(500); //I_run and holdMultiplier
+  Y_driver.rms_current(Y_MOTOR_RMS_CURRENT_mA,Y_MOTOR_I_HOLD); //I_run and holdMultiplier
   Y_driver.microsteps(8);
   Y_driver.pwm_autoscale(true);
   Y_driver.TPOWERDOWN(2);
@@ -390,7 +461,7 @@ void setup() {
   while(!STEPPER_SERIAL);
   Z_driver.begin();
   Z_driver.I_scale_analog(false);  
-  Z_driver.rms_current(500,0.5); //I_run and holdMultiplier
+  Z_driver.rms_current(Z_MOTOR_RMS_CURRENT_mA,Z_MOTOR_I_HOLD); //I_run and holdMultiplier
   Z_driver.microsteps(8);
   Z_driver.TPOWERDOWN(2);
   Z_driver.pwm_autoscale(true);
@@ -431,9 +502,12 @@ void setup() {
   Z_pos = 0;
 
   // limit switch
+  // configured by the computer instead
+  /*
   attachInterrupt(digitalPinToInterrupt(X_LIM), ISR_limit_switch_X, FALLING);
   attachInterrupt(digitalPinToInterrupt(Y_LIM), ISR_limit_switch_Y, FALLING);
   attachInterrupt(digitalPinToInterrupt(Z_LIM), ISR_limit_switch_Z, FALLING);
+  */
 
   // focus
   pinMode(focusWheel_A,INPUT_PULLUP);
@@ -487,7 +561,7 @@ void loop() {
         case MOVE_X:
         {
           long relative_position = int32_t(uint32_t(buffer_rx[2])*16777216 + uint32_t(buffer_rx[3])*65536 + uint32_t(buffer_rx[4])*256 + uint32_t(buffer_rx[5]));
-          X_commanded_target_position = ( relative_position>0?min(stepper_X.currentPosition()+relative_position,X_POS_LIMIT_MM*steps_per_mm_X):max(stepper_X.currentPosition()+relative_position,X_NEG_LIMIT_MM*steps_per_mm_X) );
+          X_commanded_target_position = ( relative_position>0?min(stepper_X.currentPosition()+relative_position,X_POS_LIMIT):max(stepper_X.currentPosition()+relative_position,X_NEG_LIMIT) );
           stepper_X.moveTo(X_commanded_target_position);
           X_commanded_movement_in_progress = true;
           runSpeed_flag_X = false;
@@ -497,7 +571,7 @@ void loop() {
         case MOVE_Y:
         {
           long relative_position = int32_t(uint32_t(buffer_rx[2])*16777216 + uint32_t(buffer_rx[3])*65536 + uint32_t(buffer_rx[4])*256 + uint32_t(buffer_rx[5]));
-          Y_commanded_target_position = ( relative_position>0?min(stepper_Y.currentPosition()+relative_position,Y_POS_LIMIT_MM*steps_per_mm_Y):max(stepper_Y.currentPosition()+relative_position,Y_NEG_LIMIT_MM*steps_per_mm_Y) );
+          Y_commanded_target_position = ( relative_position>0?min(stepper_Y.currentPosition()+relative_position,Y_POS_LIMIT):max(stepper_Y.currentPosition()+relative_position,Y_NEG_LIMIT) );
           stepper_Y.moveTo(Y_commanded_target_position);
           Y_commanded_movement_in_progress = true;
           runSpeed_flag_Y = false;
@@ -507,7 +581,7 @@ void loop() {
         case MOVE_Z:
         {
           long relative_position = int32_t(uint32_t(buffer_rx[2])*16777216 + uint32_t(buffer_rx[3])*65536 + uint32_t(buffer_rx[4])*256 + uint32_t(buffer_rx[5]));
-          Z_commanded_target_position = ( relative_position>0?min(stepper_Z.currentPosition()+relative_position,Z_POS_LIMIT_MM*steps_per_mm_Z):max(stepper_Z.currentPosition()+relative_position,Z_NEG_LIMIT_MM*steps_per_mm_Z) );
+          Z_commanded_target_position = ( relative_position>0?min(stepper_Z.currentPosition()+relative_position,Z_POS_LIMIT):max(stepper_Z.currentPosition()+relative_position,Z_NEG_LIMIT) );
           /*
           // mcu_cmd_execution_in_progress = true; // because runToNewPosition is blocking, changing this flag is not needed
           stepper_Z.runToNewPosition(Z_commanded_target_position);
@@ -555,6 +629,176 @@ void loop() {
           mcu_cmd_execution_in_progress = true;
           break;
         }
+        case SET_LIM:
+        {
+          switch(buffer_rx[2])
+          {
+            case LIM_CODE_X_POSITIVE:
+            {
+              X_POS_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+            case LIM_CODE_X_NEGATIVE:
+            {
+              X_NEG_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+            case LIM_CODE_Y_POSITIVE:
+            {
+              Y_POS_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+            case LIM_CODE_Y_NEGATIVE:
+            {
+              Y_NEG_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+            case LIM_CODE_Z_POSITIVE:
+            {
+              Z_POS_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+            case LIM_CODE_Z_NEGATIVE:
+            {
+              Z_NEG_LIMIT = int32_t(uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]));
+              break;
+            }
+          }
+          break;
+        }
+        case SET_LIM_SWITCH_POLARITY:
+        {
+          switch(buffer_rx[2])
+          {
+            case AXIS_X:
+            {
+              detachInterrupt(digitalPinToInterrupt(X_LIM));
+              if(buffer_rx[3]!=DISABLED)
+              {
+                attachInterrupt(digitalPinToInterrupt(X_LIM), ISR_limit_switch_X, buffer_rx[3]==ACTIVE_LOW?FALLING:RISING);
+                LIM_SWITCH_X_ACTIVE_LOW = (buffer_rx[3]==ACTIVE_LOW);
+              }
+              break;
+            }
+            case AXIS_Y:
+            {
+              detachInterrupt(digitalPinToInterrupt(Y_LIM));
+              if(buffer_rx[3]!=DISABLED)
+              {
+                attachInterrupt(digitalPinToInterrupt(Y_LIM), ISR_limit_switch_Y, buffer_rx[3]==ACTIVE_LOW?FALLING:RISING);
+                LIM_SWITCH_Y_ACTIVE_LOW = (buffer_rx[3]==ACTIVE_LOW);
+              }
+              break;
+            }
+            case AXIS_Z:
+            {
+              detachInterrupt(digitalPinToInterrupt(Z_LIM));
+              if(buffer_rx[3]!=DISABLED)
+              {
+                attachInterrupt(digitalPinToInterrupt(Z_LIM), ISR_limit_switch_Z, buffer_rx[3]==ACTIVE_LOW?FALLING:RISING);
+                LIM_SWITCH_Z_ACTIVE_LOW = (buffer_rx[3]==ACTIVE_LOW);
+              }
+              break;
+            }
+          }
+          break;
+        }
+        case CONFIGURE_STEPPER_DRIVER:
+        {
+          switch(buffer_rx[2])
+          {
+            case AXIS_X:
+            {
+              int microstepping_setting = buffer_rx[3];
+              X_driver.microsteps(microstepping_setting);
+              MICROSTEPPING_X = microstepping_setting==0?1:microstepping_setting;
+              steps_per_mm_X = FULLSTEPS_PER_REV_X*MICROSTEPPING_X/SCREW_PITCH_X_MM;
+              X_MOTOR_RMS_CURRENT_mA = uint16_t(buffer_rx[4])*256+uint16_t(buffer_rx[5]);
+              X_MOTOR_I_HOLD = float(buffer_rx[6])/255;
+              X_driver.rms_current(X_MOTOR_RMS_CURRENT_mA,X_MOTOR_I_HOLD); //I_run and holdMultiplier
+              break;
+            }
+            case AXIS_Y:
+            {
+              int microstepping_setting = buffer_rx[3];
+              Y_driver.microsteps(microstepping_setting);
+              MICROSTEPPING_Y = microstepping_setting==0?1:microstepping_setting;
+              steps_per_mm_Y = FULLSTEPS_PER_REV_Y*MICROSTEPPING_Y/SCREW_PITCH_Y_MM;
+              Y_MOTOR_RMS_CURRENT_mA = uint16_t(buffer_rx[4])*256+uint16_t(buffer_rx[5]);
+              Y_MOTOR_I_HOLD = float(buffer_rx[6])/255;
+              Y_driver.rms_current(Y_MOTOR_RMS_CURRENT_mA,Y_MOTOR_I_HOLD); //I_run and holdMultiplier
+              break;
+            }
+            case AXIS_Z:
+            {
+              int microstepping_setting = buffer_rx[3];
+              Z_driver.microsteps(microstepping_setting);
+              MICROSTEPPING_Z = microstepping_setting==0?1:microstepping_setting;
+              steps_per_mm_Z = FULLSTEPS_PER_REV_Z*MICROSTEPPING_Z/SCREW_PITCH_Z_MM;
+              Z_MOTOR_RMS_CURRENT_mA = uint16_t(buffer_rx[4])*256+uint16_t(buffer_rx[5]);
+              Z_MOTOR_I_HOLD = float(buffer_rx[6])/255;
+              Z_driver.rms_current(Z_MOTOR_RMS_CURRENT_mA,Z_MOTOR_I_HOLD); //I_run and holdMultiplier
+              break;
+            }
+          }
+          break;
+        }
+        case SET_MAX_VELOCITY_ACCELERATION:
+        {
+          switch(buffer_rx[2])
+          {
+            case AXIS_X:
+            {
+              MAX_VELOCITY_X_mm = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/100;
+              MAX_ACCELERATION_X_mm = float(uint16_t(buffer_rx[5])*256+uint16_t(buffer_rx[6]))/10;
+              stepper_X.setMaxSpeed(MAX_VELOCITY_X_mm*steps_per_mm_X);
+              stepper_X.setAcceleration(MAX_ACCELERATION_X_mm*steps_per_mm_X);
+              break;
+            }
+            case AXIS_Y:
+            {
+              MAX_VELOCITY_Y_mm = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/100;
+              MAX_ACCELERATION_Y_mm = float(uint16_t(buffer_rx[5])*256+uint16_t(buffer_rx[6]))/10;
+              stepper_Y.setMaxSpeed(MAX_VELOCITY_Y_mm*steps_per_mm_Y);
+              stepper_Y.setAcceleration(MAX_ACCELERATION_Y_mm*steps_per_mm_Y);
+              break;
+            }
+            case AXIS_Z:
+            {
+              MAX_VELOCITY_Z_mm = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/100;
+              MAX_ACCELERATION_Z_mm = float(uint16_t(buffer_rx[5])*256+uint16_t(buffer_rx[6]))/10;
+              stepper_Z.setMaxSpeed(MAX_VELOCITY_Z_mm*steps_per_mm_Z);
+              stepper_Z.setAcceleration(MAX_ACCELERATION_Z_mm*steps_per_mm_Z);
+              break;
+            }
+          }
+          break;
+        }
+        case SET_LEAD_SCREW_PITCH:
+        {
+          switch(buffer_rx[2])
+          {
+            case AXIS_X:
+            {
+              SCREW_PITCH_X_MM = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/1000;
+              steps_per_mm_X = FULLSTEPS_PER_REV_X*MICROSTEPPING_X/SCREW_PITCH_X_MM;
+              break;
+            }
+            case AXIS_Y:
+            {
+              SCREW_PITCH_Y_MM = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/1000;
+              steps_per_mm_Y = FULLSTEPS_PER_REV_Y*MICROSTEPPING_Y/SCREW_PITCH_Y_MM;
+              break;
+            }
+            case AXIS_Z:
+            {
+              SCREW_PITCH_Z_MM = float(uint16_t(buffer_rx[3])*256+uint16_t(buffer_rx[4]))/1000;
+              steps_per_mm_Z = FULLSTEPS_PER_REV_Z*MICROSTEPPING_Z/SCREW_PITCH_Z_MM;
+              break;
+            }
+          }
+          break;
+        }
         case HOME_OR_ZERO:
         {
           // zeroing
@@ -586,7 +830,7 @@ void loop() {
               case AXIS_X:
                 homing_direction_X = buffer_rx[3];
                 home_X_found = false;
-                if(digitalRead(X_LIM)==HIGH)
+                if(digitalRead(X_LIM)==(LIM_SWITCH_X_ACTIVE_LOW?HIGH:LOW))
                 {
                   is_homing_X = true;
                   runSpeed_flag_X = true;
@@ -609,7 +853,7 @@ void loop() {
               case AXIS_Y:
                 homing_direction_Y = buffer_rx[3];
                 home_Y_found = false;
-                if(digitalRead(Y_LIM)==HIGH)
+                if(digitalRead(Y_LIM)==(LIM_SWITCH_Y_ACTIVE_LOW?HIGH:LOW))
                 {
                   is_homing_Y = true;
                   runSpeed_flag_Y = true;
@@ -632,7 +876,7 @@ void loop() {
               case AXIS_Z:
                 homing_direction_Z = buffer_rx[3];
                 home_Z_found = false;
-                if(digitalRead(Z_LIM)==HIGH)
+                if(digitalRead(Z_LIM)==(LIM_SWITCH_Z_ACTIVE_LOW?HIGH:LOW))
                 {
                   is_homing_Z = true;
                   runSpeed_flag_Z = true;
@@ -658,7 +902,7 @@ void loop() {
                 home_Y_found = false;
                 // homing x 
                 homing_direction_X = buffer_rx[3];
-                if(digitalRead(X_LIM)==HIGH)
+                if(digitalRead(X_LIM)==(LIM_SWITCH_X_ACTIVE_LOW?HIGH:LOW))
                 {
                   is_homing_X = true;
                   runSpeed_flag_X = true;
@@ -679,7 +923,7 @@ void loop() {
                 }
                 // homing y
                 homing_direction_Y = buffer_rx[4];
-                if(digitalRead(Y_LIM)==HIGH)
+                if(digitalRead(Y_LIM)==(LIM_SWITCH_Y_ACTIVE_LOW?HIGH:LOW))
                 {
                   is_homing_Y = true;
                   runSpeed_flag_Y = true;
@@ -739,6 +983,22 @@ void loop() {
             analogWrite(DAC0,value);
           else
             analogWrite(DAC1,value);
+          break;
+        }
+        case SET_STROBE_DELAY:
+        {
+          strobe_delay[buffer_rx[2]] = uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]);
+          break;
+        }
+        case SEND_HARDWARE_TRIGGER:
+        {
+          int camera_channel = buffer_rx[2] & 0x0f;
+          control_strobe[camera_channel] = buffer_rx[2] >> 7;
+          illumination_on_time[camera_channel] = uint32_t(buffer_rx[3])*16777216 + uint32_t(buffer_rx[4])*65536 + uint32_t(buffer_rx[5])*256 + uint32_t(buffer_rx[6]);
+          digitalWrite(camera_trigger_pins[camera_channel],HIGH);
+          timestamp_trigger_rising_edge[camera_channel] = micros();
+          trigger_output_level[camera_channel] = HIGH;
+          break;
         }
         default:
           break;
@@ -747,10 +1007,53 @@ void loop() {
     }
   }
 
+  // camera trigger
+  for(int camera_channel=0;camera_channel<5;camera_channel++)
+  {
+    // end the trigger pulse
+    if(trigger_output_level[camera_channel] == HIGH && (micros()-timestamp_trigger_rising_edge[camera_channel])>= TRIGGER_PULSE_LENGTH_us )
+    {
+      digitalWrite(camera_trigger_pins[camera_channel],LOW);
+      trigger_output_level[camera_channel] = LOW;
+    }
+
+    // strobe pulse
+    if(control_strobe[camera_channel])
+    {
+      if(illumination_on_time[camera_channel] <= 30000)
+      {
+        // if the illumination on time is smaller than 30 ms, use delayMicroseconds to control the pulse length to avoid pulse length jitter (can be up to 20 us if using the code in the else branch)
+        if( ((micros()-timestamp_trigger_rising_edge[camera_channel])>=strobe_delay[camera_channel]) && strobe_output_level[camera_channel]==LOW )
+        {
+          turn_on_illumination();
+          delayMicroseconds(illumination_on_time[camera_channel]);
+          turn_off_illumination();
+          control_strobe[camera_channel] = false;
+        }
+      }
+      else
+      {
+        // start the strobe
+        if( ((micros()-timestamp_trigger_rising_edge[camera_channel])>=strobe_delay[camera_channel]) && strobe_output_level[camera_channel]==LOW )
+        {
+          turn_on_illumination();
+          strobe_output_level[camera_channel] = HIGH;
+        }
+        // end the strobe
+        if(((micros()-timestamp_trigger_rising_edge[camera_channel])>=strobe_delay[camera_channel]+illumination_on_time[camera_channel]) && strobe_output_level[camera_channel]==HIGH)
+        {
+          turn_off_illumination();
+          strobe_output_level[camera_channel] = LOW;
+          control_strobe[camera_channel] = false;
+        }
+      }      
+    }
+  }
+
   // homing - preparing for homing
   if(is_preparing_for_homing_X)
   {
-    if(digitalRead(X_LIM)==HIGH)
+    if(digitalRead(X_LIM)==(LIM_SWITCH_X_ACTIVE_LOW?HIGH:LOW))
     {
       is_preparing_for_homing_X = false;
       is_homing_X = true;
@@ -763,7 +1066,7 @@ void loop() {
   }
   if(is_preparing_for_homing_Y)
   {
-    if(digitalRead(Y_LIM)==HIGH)
+    if(digitalRead(Y_LIM)==(LIM_SWITCH_Y_ACTIVE_LOW?HIGH:LOW))
     {
       is_preparing_for_homing_Y = false;
       is_homing_Y = true;
@@ -776,7 +1079,7 @@ void loop() {
   }
   if(is_preparing_for_homing_Z)
   {
-    if(digitalRead(Z_LIM)==HIGH)
+    if(digitalRead(Z_LIM)==(LIM_SWITCH_Z_ACTIVE_LOW?HIGH:LOW))
     {
       is_preparing_for_homing_Z = false;
       is_homing_Z = true;
@@ -787,11 +1090,13 @@ void loop() {
         stepper_Z.setSpeed(HOMING_VELOCITY_Z*MAX_VELOCITY_X_mm*steps_per_mm_Z);
     }
   }
-  
+
+  // the following code can cause issues because of the or operation
+  /*
   // homing - software limit reached
   if(is_homing_X || is_preparing_for_homing_X)
   {
-    if(stepper_X.currentPosition()<=X_NEG_LIMIT_MM*steps_per_mm_X || stepper_X.currentPosition()>=X_POS_LIMIT_MM*steps_per_mm_X)
+    if(stepper_X.currentPosition()<=X_NEG_LIMIT || stepper_X.currentPosition()>=X_POS_LIMIT)
     {
       stepper_X.setSpeed(0);
       runSpeed_flag_X = false;
@@ -802,7 +1107,7 @@ void loop() {
   }
   if(is_homing_Y || is_preparing_for_homing_Y)
   {
-    if(stepper_Y.currentPosition()<=Y_NEG_LIMIT_MM*steps_per_mm_Y || stepper_Y.currentPosition()>=Y_POS_LIMIT_MM*steps_per_mm_Y)
+    if(stepper_Y.currentPosition()<=Y_NEG_LIMIT || stepper_Y.currentPosition()>=Y_POS_LIMIT)
     {
       stepper_Y.setSpeed(0);
       runSpeed_flag_Y = false;
@@ -813,7 +1118,7 @@ void loop() {
   }
   if(is_homing_Z || is_preparing_for_homing_Z)
   {
-    if(stepper_Z.currentPosition()<=Z_NEG_LIMIT_MM*steps_per_mm_Z || stepper_Z.currentPosition()>=Z_POS_LIMIT_MM*steps_per_mm_Z)
+    if(stepper_Z.currentPosition()<=Z_NEG_LIMIT || stepper_Z.currentPosition()>=Z_POS_LIMIT)
     {
       stepper_Z.setSpeed(0);
       runSpeed_flag_Z = false;
@@ -822,6 +1127,7 @@ void loop() {
       mcu_cmd_execution_in_progress = false; // to do: return an error: mcu_cmd_execution_in_progress = 2 [first change the variable type from int to uint8]
     }
   }
+  */
 
   // finish homing
   if(is_homing_X && home_X_found && stepper_X.distanceToGo() == 0)
@@ -846,6 +1152,7 @@ void loop() {
   {
     stepper_Z.setCurrentPosition(0);
     Z_pos = 0;
+    focusPosition = 0;
     is_homing_Z = false;
     Z_commanded_movement_in_progress = false;
     mcu_cmd_execution_in_progress = false;
@@ -872,17 +1179,17 @@ void loop() {
     if(!X_commanded_movement_in_progress && !is_homing_X && !is_preparing_for_homing_X) //if(stepper_X.distanceToGo()==0) // only read joystick when computer commanded travel has finished - doens't work
     {
       deltaX = analogRead(joystick_X) - joystick_offset_x;
-      deltaX_float = deltaX;
+      deltaX_float = JOYSTICK_SIGN_X*deltaX;
       if(abs(deltaX_float)>joystickSensitivity)
       {
         stepper_X.setSpeed(sgn(deltaX_float)*((abs(deltaX_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_X_mm*steps_per_mm_X);
         runSpeed_flag_X = true;
-        if(stepper_X.currentPosition()>=X_POS_LIMIT_MM*steps_per_mm_X && deltaX_float>0)
+        if(stepper_X.currentPosition()>=X_POS_LIMIT && deltaX_float>0)
         {
           runSpeed_flag_X = false;
           stepper_X.setSpeed(0);
         }
-        if(stepper_X.currentPosition()<=X_NEG_LIMIT_MM*steps_per_mm_X && deltaX_float<0)
+        if(stepper_X.currentPosition()<=X_NEG_LIMIT && deltaX_float<0)
           {
           runSpeed_flag_X = false;
           stepper_X.setSpeed(0);
@@ -899,17 +1206,17 @@ void loop() {
     if(!Y_commanded_movement_in_progress && !is_homing_Y && !is_preparing_for_homing_Y)
     {
       deltaY = analogRead(joystick_Y) - joystick_offset_y;
-      deltaY_float = -deltaY;
+      deltaY_float = JOYSTICK_SIGN_Y*deltaY;
       if(abs(deltaY)>joystickSensitivity)
       {
         stepper_Y.setSpeed(sgn(deltaY_float)*((abs(deltaY_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_Y_mm*steps_per_mm_Y);
         runSpeed_flag_Y = true;
-        if(stepper_Y.currentPosition()>=Y_POS_LIMIT_MM*steps_per_mm_Y && deltaY_float>0)
+        if(stepper_Y.currentPosition()>=Y_POS_LIMIT && deltaY_float>0)
         {
           runSpeed_flag_Y = false;
           stepper_Y.setSpeed(0);
         }
-        if(stepper_Y.currentPosition()<=Y_NEG_LIMIT_MM*steps_per_mm_Y && deltaY_float<0)
+        if(stepper_Y.currentPosition()<=Y_NEG_LIMIT && deltaY_float<0)
         {
           runSpeed_flag_Y = false;
           stepper_Y.setSpeed(0);
@@ -925,6 +1232,10 @@ void loop() {
   }
   
   // focus control
+  if(focusPosition > Z_POS_LIMIT)
+    focusPosition = Z_POS_LIMIT;
+  if(focusPosition < Z_NEG_LIMIT)
+    focusPosition = Z_NEG_LIMIT;
   stepper_Z.moveTo(focusPosition);
 
   // send position update to computer
@@ -1000,7 +1311,10 @@ void loop() {
   else if(runSpeed_flag_Y)
     stepper_Y.runSpeed();
 
-  stepper_Z.run();
+  if(runSpeed_flag_Z)
+    stepper_Z.runSpeed();
+  else
+    stepper_Z.run();
 }
 
 /***************************************************
@@ -1077,23 +1391,23 @@ void timer_interruptHandler(){
 void ISR_focusWheel_A(){
   if(digitalRead(focusWheel_B)==1)
   {
-    focusPosition = focusPosition + 1;
+    focusPosition = focusPosition + JOYSTICK_SIGN_Z*1;
     digitalWrite(13,HIGH);
   }
   else
   {
-    focusPosition = focusPosition - 1;
+    focusPosition = focusPosition - JOYSTICK_SIGN_Z*1;
     digitalWrite(13,LOW);
   }
 }
 void ISR_focusWheel_B(){
   if(digitalRead(focusWheel_A)==1)
   {
-    focusPosition = focusPosition - 1;
+    focusPosition = focusPosition - JOYSTICK_SIGN_Z*1;
   }
   else
   {
-    focusPosition = focusPosition + 1;
+    focusPosition = focusPosition + JOYSTICK_SIGN_Z*1;
   }
 }
 
@@ -1196,6 +1510,42 @@ void set_right(Adafruit_DotStar & matrix, int r, int g, int b)
     matrix.setPixelColor(i,r,g,b);
 }
 
+void set_low_na(Adafruit_DotStar & matrix, int r, int g, int b)
+{
+  // matrix.setPixelColor(44,r,g,b);
+  matrix.setPixelColor(45,r,g,b);
+  matrix.setPixelColor(46,r,g,b);
+  // matrix.setPixelColor(47,r,g,b);
+  matrix.setPixelColor(56,r,g,b);
+  matrix.setPixelColor(57,r,g,b);
+  matrix.setPixelColor(58,r,g,b);
+  matrix.setPixelColor(59,r,g,b);
+  matrix.setPixelColor(68,r,g,b);
+  matrix.setPixelColor(69,r,g,b);
+  matrix.setPixelColor(70,r,g,b);
+  matrix.setPixelColor(71,r,g,b);
+  // matrix.setPixelColor(80,r,g,b);
+  matrix.setPixelColor(81,r,g,b);
+  matrix.setPixelColor(82,r,g,b);
+  // matrix.setPixelColor(83,r,g,b);
+}
+
+void set_left_dot(Adafruit_DotStar & matrix, int r, int g, int b)
+{
+  matrix.setPixelColor(3,r,g,b);
+  matrix.setPixelColor(4,r,g,b);
+  matrix.setPixelColor(11,r,g,b);
+  matrix.setPixelColor(12,r,g,b);
+}
+
+void set_right_dot(Adafruit_DotStar & matrix, int r, int g, int b)
+{
+  matrix.setPixelColor(115,r,g,b);
+  matrix.setPixelColor(116,r,g,b);
+  matrix.setPixelColor(123,r,g,b);
+  matrix.setPixelColor(124,r,g,b);
+}
+
 void clear_matrix(Adafruit_DotStar & matrix)
 {
   for (int i = 0; i < DOTSTAR_NUM_LEDS; i++)
@@ -1227,6 +1577,16 @@ void turn_on_LED_matrix_pattern(Adafruit_DotStar & matrix, int pattern, uint8_t 
     case ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR:
       set_left(matrix,0,0,led_matrix_b*BLUE_ADJUSTMENT_FACTOR);
       set_right(matrix,0,led_matrix_r*RED_ADJUSTMENT_FACTOR,0);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA:
+      set_low_na(matrix, led_matrix_g*GREEN_ADJUSTMENT_FACTOR, led_matrix_r*RED_ADJUSTMENT_FACTOR, led_matrix_b*BLUE_ADJUSTMENT_FACTOR);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT:
+      set_left_dot(matrix, led_matrix_g*GREEN_ADJUSTMENT_FACTOR, led_matrix_r*RED_ADJUSTMENT_FACTOR, led_matrix_b*BLUE_ADJUSTMENT_FACTOR);
+      break;
+    case ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT:
+      set_right_dot(matrix, led_matrix_g*GREEN_ADJUSTMENT_FACTOR, led_matrix_r*RED_ADJUSTMENT_FACTOR, led_matrix_b*BLUE_ADJUSTMENT_FACTOR);
+      break;
   }
   matrix.show();
 }

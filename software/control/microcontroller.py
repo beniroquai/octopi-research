@@ -97,6 +97,27 @@ class Microcontroller():
         cmd[5] = min(int(b*255),255)
         self.send_command(cmd)
 
+    def send_hardware_trigger(self,control_illumination=False,illumination_on_time_us=0,trigger_output_ch=0):
+        illumination_on_time_us = int(illumination_on_time_us)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SEND_HARDWARE_TRIGGER
+        cmd[2] = (control_illumination<<7) + trigger_output_ch # MSB: whether illumination is controlled
+        cmd[3] = illumination_on_time_us >> 24
+        cmd[4] = (illumination_on_time_us >> 16) & 0xff
+        cmd[5] = (illumination_on_time_us >> 8) & 0xff
+        cmd[6] = illumination_on_time_us & 0xff
+        self.send_command(cmd)
+
+    def set_strobe_delay_us(self, strobe_delay_us, camera_channel=0):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_STROBE_DELAY
+        cmd[2] = camera_channel
+        cmd[3] = strobe_delay_us >> 24
+        cmd[4] = (strobe_delay_us >> 16) & 0xff
+        cmd[5] = (strobe_delay_us >> 8) & 0xff
+        cmd[6] = strobe_delay_us & 0xff
+        self.send_command(cmd)
+
     '''
     def move_x(self,delta):
         direction = int((np.sign(delta)+1)/2)
@@ -381,6 +402,78 @@ class Microcontroller():
         #     time.sleep(self._motion_status_checking_interval)
         #     # to do: add timeout
 
+    def set_lim(self,limit_code,usteps):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LIM
+        cmd[2] = limit_code
+        payload = self._int_to_payload(usteps,4)
+        cmd[3] = payload >> 24
+        cmd[4] = (payload >> 16) & 0xff
+        cmd[5] = (payload >> 8) & 0xff
+        cmd[6] = payload & 0xff
+        self.send_command(cmd)
+
+    def set_limit_switch_polarity(self,axis,polarity):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LIM_SWITCH_POLARITY
+        cmd[2] = axis
+        cmd[3] = polarity
+        self.send_command(cmd)
+
+    def configure_motor_driver(self,axis,microstepping,current_rms,I_hold):
+        # current_rms in mA
+        # I_hold 0.0-1.0
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.CONFIGURE_STEPPER_DRIVER
+        cmd[2] = axis
+        if microstepping == 1:
+            cmd[3] = 0
+        else:
+            cmd[3] = microstepping
+        cmd[4] = current_rms >> 8
+        cmd[5] = current_rms & 0xff
+        cmd[6] = int(I_hold*255)
+        self.send_command(cmd)
+
+    def set_max_velocity_acceleration(self,axis,velocity,acceleration):
+        # velocity: max 65535/100 mm/s
+        # acceleration: max 65535/10 mm/s^2
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_MAX_VELOCITY_ACCELERATION
+        cmd[2] = axis
+        cmd[3] = int(velocity*100) >> 8
+        cmd[4] = int(velocity*100) & 0xff
+        cmd[5] = int(acceleration*10) >> 8
+        cmd[6] = int(acceleration*10) & 0xff
+        self.send_command(cmd)
+
+    def set_leadscrew_pitch(self,axis,pitch_mm):
+        # pitch: max 65535/1000 = 65.535 (mm)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LEAD_SCREW_PITCH
+        cmd[2] = axis
+        cmd[3] = int(pitch_mm*1000) >> 8
+        cmd[4] = int(pitch_mm*1000) & 0xff
+        self.send_command(cmd)
+
+    def configure_actuators(self):
+        # lead screw pitch
+        self.set_leadscrew_pitch(AXIS.X,SCREW_PITCH_X_MM)
+        self.set_leadscrew_pitch(AXIS.Y,SCREW_PITCH_Y_MM)
+        self.set_leadscrew_pitch(AXIS.Z,SCREW_PITCH_Z_MM)
+        # stepper driver (microstepping,rms current and I_hold)
+        self.configure_motor_driver(AXIS.X,MICROSTEPPING_DEFAULT_X,X_MOTOR_RMS_CURRENT_mA,X_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Y,MICROSTEPPING_DEFAULT_Y,Y_MOTOR_RMS_CURRENT_mA,Y_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Z,MICROSTEPPING_DEFAULT_Z,Z_MOTOR_RMS_CURRENT_mA,Z_MOTOR_I_HOLD)
+        # max velocity and acceleration
+        self.set_max_velocity_acceleration(AXIS.X,MAX_VELOCITY_X_mm,MAX_ACCELERATION_X_mm)
+        self.set_max_velocity_acceleration(AXIS.Y,MAX_VELOCITY_Y_mm,MAX_ACCELERATION_Y_mm)
+        self.set_max_velocity_acceleration(AXIS.Z,MAX_VELOCITY_Z_mm,MAX_ACCELERATION_Z_mm)
+        # home switch
+        self.set_limit_switch_polarity(AXIS.X,X_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Y,Y_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Z,Z_HOME_SWITCH_POLARITY)
+
     def ack_joystick_button_pressed(self):
         cmd = bytearray(self.tx_buffer_length)
         cmd[1] = CMD_SET.ACK_JOYSTICK_BUTTON_PRESSED
@@ -630,6 +723,71 @@ class Microcontroller_Simulation():
         cmd = bytearray(self.tx_buffer_length)
         self.send_command(cmd)
 
+    def set_lim(self,limit_code,usteps):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+
+    def configure_motor_driver(self,axis,microstepping,current_rms,I_hold):
+        # current_rms in mA
+        # I_hold 0.0-1.0
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.CONFIGURE_STEPPER_DRIVER
+        cmd[2] = axis
+        if microstepping == 1:
+            cmd[3] = 0
+        else:
+            cmd[3] = microstepping
+        cmd[4] = current_rms >> 8
+        cmd[5] = current_rms & 0xff
+        cmd[6] = int(I_hold*255)
+        self.send_command(cmd)
+
+    def set_max_velocity_acceleration(self,axis,velocity,acceleration):
+        # velocity: max 65535/100 mm/s
+        # acceleration: max 65535/10 mm/s^2
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_MAX_VELOCITY_ACCELERATION
+        cmd[2] = axis
+        cmd[3] = int(velocity*100) >> 8
+        cmd[4] = int(velocity*100) & 0xff
+        cmd[5] = int(acceleration*10) >> 8
+        cmd[6] = int(acceleration*10) & 0xff
+        self.send_command(cmd)
+
+    def set_leadscrew_pitch(self,axis,pitch_mm):
+        # pitch: max 65535/1000 = 65.535 (mm)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LEAD_SCREW_PITCH
+        cmd[2] = axis
+        cmd[3] = int(pitch_mm*1000) >> 8
+        cmd[4] = int(pitch_mm*1000) & 0xff
+        self.send_command(cmd)
+
+    def set_limit_switch_polarity(self,axis,polarity):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LIM_SWITCH_POLARITY
+        cmd[2] = axis
+        cmd[3] = polarity
+        self.send_command(cmd)
+
+    def configure_actuators(self):
+        # lead screw pitch
+        self.set_leadscrew_pitch(AXIS.X,SCREW_PITCH_X_MM)
+        self.set_leadscrew_pitch(AXIS.Y,SCREW_PITCH_Y_MM)
+        self.set_leadscrew_pitch(AXIS.Z,SCREW_PITCH_Z_MM)
+        # stepper driver (microstepping,rms current and I_hold)
+        self.configure_motor_driver(AXIS.X,MICROSTEPPING_DEFAULT_X,X_MOTOR_RMS_CURRENT_mA,X_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Y,MICROSTEPPING_DEFAULT_Y,Y_MOTOR_RMS_CURRENT_mA,Y_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Z,MICROSTEPPING_DEFAULT_Z,Z_MOTOR_RMS_CURRENT_mA,Z_MOTOR_I_HOLD)
+        # max velocity and acceleration
+        self.set_max_velocity_acceleration(AXIS.X,MAX_VELOCITY_X_mm,MAX_ACCELERATION_X_mm)
+        self.set_max_velocity_acceleration(AXIS.Y,MAX_VELOCITY_X_mm,MAX_ACCELERATION_Y_mm)
+        self.set_max_velocity_acceleration(AXIS.Z,MAX_VELOCITY_X_mm,MAX_ACCELERATION_Z_mm)
+        # home switch
+        self.set_limit_switch_polarity(AXIS.X,X_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Y,Y_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Z,Z_HOME_SWITCH_POLARITY)
+
     def analog_write_onboard_DAC(self,dac,value):
         cmd = bytearray(self.tx_buffer_length)
         cmd[1] = CMD_SET.ANALOG_WRITE_ONBOARD_DAC
@@ -691,6 +849,28 @@ class Microcontroller_Simulation():
         cmd = bytearray(self.tx_buffer_length)
         self.send_command(cmd)
         print('   mcu command ' + str(self._cmd_id) + ': set illumination (led matrix)')
+
+    def send_hardware_trigger(self,control_illumination=False,illumination_on_time_us=0,trigger_output_ch = 0):
+        illumination_on_time_us = int(illumination_on_time_us)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SEND_HARDWARE_TRIGGER
+        cmd[2] = (control_illumination<<7) + trigger_output_ch # MSB: whether illumination is controlled
+        cmd[3] = illumination_on_time_us >> 24
+        cmd[4] = (illumination_on_time_us >> 16) & 0xff
+        cmd[5] = (illumination_on_time_us >> 8) & 0xff
+        cmd[6] = illumination_on_time_us & 0xff
+        self.send_command(cmd)
+
+    def set_strobe_delay_us(self, strobe_delay_us, camera_channel=0):
+        print('set strobe delay')
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_STROBE_DELAY
+        cmd[2] = camera_channel
+        cmd[3] = strobe_delay_us >> 24
+        cmd[4] = (strobe_delay_us >> 16) & 0xff
+        cmd[5] = (strobe_delay_us >> 8) & 0xff
+        cmd[6] = strobe_delay_us & 0xff
+        self.send_command(cmd)
 
     def get_pos(self):
         return self.x_pos, self.y_pos, self.z_pos, self.theta_pos
