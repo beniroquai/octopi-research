@@ -287,6 +287,7 @@ MULTIPOINT_BF_SAVING_OPTION = 'Raw'
 #### start of loading machine specific configurations ####
 ##########################################################
 config_files = glob.glob('.' + '/' + 'configuration*.txt')
+config_files = ["./software/configuration.txt"]
 if config_files:
     if len(config_files) > 1:
         print('multiple machine configuration files found, the program will exit')

@@ -19,7 +19,7 @@ args = parser.parse_args()
 if __name__ == "__main__":
 
     app = QApplication([])
-    if(args.simulation):
+    if(1):
     	win = gui.OctopiGUI(is_simulation = True)
     else:
     	win = gui.OctopiGUI()
