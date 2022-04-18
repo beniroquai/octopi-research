@@ -110,6 +110,7 @@ class StreamHandler(QObject):
         # # rotate and flip - moved up (1/10/2022)
         # image_cropped = utils.rotate_and_flip_image(image_cropped,rotate_image_angle=ROTATE_IMAGE_ANGLE,flip_image=FLIP_IMAGE)
         # added on 1/30/2022
+        # @@@ to move to camera
         image_cropped = utils.rotate_and_flip_image(image_cropped,rotate_image_angle=camera.rotate_image_angle,flip_image=camera.flip_image)
 
         # send image to display
@@ -221,9 +222,12 @@ class ImageSaver(QObject):
     def set_recording_time_limit(self,time_limit):
         self.recording_time_limit = time_limit
 
-    def start_new_experiment(self,experiment_ID):
-        # generate unique experiment ID
-        self.experiment_ID = experiment_ID + '_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%-S.%f')
+    def start_new_experiment(self,experiment_ID,add_timestamp=True):
+        if add_timestamp:
+            # generate unique experiment ID
+            self.experiment_ID = experiment_ID + '_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%-S.%f')
+        else:
+            self.experiment_ID = experiment_ID
         self.recording_start_time = time.time()
         # create a new folder
         try:
@@ -345,7 +349,7 @@ class Configuration:
 
 class LiveController(QObject):
 
-    def __init__(self,camera,microcontroller,configurationManager,control_illumination=True):
+    def __init__(self,camera,microcontroller,configurationManager,control_illumination=True,use_internal_timer_for_hardware_trigger=True):
         QObject.__init__(self)
         self.camera = camera
         self.microcontroller = microcontroller
@@ -357,6 +361,7 @@ class LiveController(QObject):
         self.was_live_before_multipoint = False
         self.control_illumination = control_illumination
         self.illumination_on = False
+        self.use_internal_timer_for_hardware_trigger = use_internal_timer_for_hardware_trigger # use QTimer vs timer in the MCU
 
         self.fps_trigger = 1;
         self.timer_trigger_interval = (1/self.fps_trigger)*1000
@@ -391,7 +396,7 @@ class LiveController(QObject):
     def start_live(self):
         self.is_live = True
         self.camera.start_streaming()
-        if self.trigger_mode == TriggerMode.SOFTWARE or self.trigger_mode == TriggerMode.HARDWARE:
+        if self.trigger_mode == TriggerMode.SOFTWARE or ( self.trigger_mode == TriggerMode.HARDWARE and self.use_internal_timer_for_hardware_trigger ):
             self._start_triggerred_acquisition()
 
     def stop_live(self):
@@ -402,7 +407,7 @@ class LiveController(QObject):
             # self.camera.stop_streaming() # 20210113 this line seems to cause problems when using af with multipoint
             if self.trigger_mode == TriggerMode.CONTINUOUS:
             	self.camera.stop_streaming()
-            if self.trigger_mode == TriggerMode.HARDWARE:
+            if ( self.trigger_mode == TriggerMode.SOFTWARE ) or ( self.trigger_mode == TriggerMode.HARDWARE and self.use_internal_timer_for_hardware_trigger ):
                 self._stop_triggerred_acquisition()
             if self.control_illumination:
                 self.turn_off_illumination()
@@ -441,23 +446,27 @@ class LiveController(QObject):
     # trigger mode and settings
     def set_trigger_mode(self,mode):
         if mode == TriggerMode.SOFTWARE:
+            if self.is_live and ( self.trigger_mode == TriggerMode.HARDWARE and self.use_internal_timer_for_hardware_trigger ):
+                self._stop_triggerred_acquisition()
             self.camera.set_software_triggered_acquisition()
             if self.is_live:
                 self._start_triggerred_acquisition()
         if mode == TriggerMode.HARDWARE:
-            if self.trigger_mode == TriggerMode.SOFTWARE:
+            if self.trigger_mode == TriggerMode.SOFTWARE and self.is_live:
                 self._stop_triggerred_acquisition()
             # self.camera.reset_camera_acquisition_counter()
             self.camera.set_hardware_triggered_acquisition()
             self.microcontroller.set_strobe_delay_us(self.camera.strobe_delay_us)
+            if self.is_live and self.use_internal_timer_for_hardware_trigger:
+                self._start_triggerred_acquisition()
         if mode == TriggerMode.CONTINUOUS:
-            if self.trigger_mode == TriggerMode.SOFTWARE:
+            if ( self.trigger_mode == TriggerMode.SOFTWARE ) or ( self.trigger_mode == TriggerMode.HARDWARE and self.use_internal_timer_for_hardware_trigger ):
                 self._stop_triggerred_acquisition()
             self.camera.set_continuous_acquisition()
         self.trigger_mode = mode
 
     def set_trigger_fps(self,fps):
-        if self.trigger_mode == TriggerMode.SOFTWARE or self.trigger_mode == TriggerMode.HARDWARE:
+        if ( self.trigger_mode == TriggerMode.SOFTWARE ) or ( self.trigger_mode == TriggerMode.HARDWARE and self.use_internal_timer_for_hardware_trigger ):
             self._set_trigger_fps(fps)
 
     # set microscope mode
@@ -1139,8 +1148,9 @@ class MultiPointWorker(QObject):
                         # tunr of the illumination if using software trigger
                         if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
                             self.liveController.turn_off_illumination()
-                        # process the image
+                        # process the image -  @@@ to move to camera
                         image = utils.crop_image(image,self.crop_width,self.crop_height)
+                        image = utils.rotate_and_flip_image(image,rotate_image_angle=self.camera.rotate_image_angle,flip_image=self.camera.flip_image)
                         # self.image_to_display.emit(cv2.resize(image,(round(self.crop_width*self.display_resolution_scaling), round(self.crop_height*self.display_resolution_scaling)),cv2.INTER_LINEAR))
                         image_to_display = utils.crop_image(image,round(self.crop_width*self.display_resolution_scaling), round(self.crop_height*self.display_resolution_scaling))
                         self.image_to_display.emit(image_to_display)
@@ -1809,7 +1819,7 @@ class TrackingWorker(QObject):
 
 class ImageDisplayWindow(QMainWindow):
 
-    def __init__(self, window_title='', draw_crosshairs = False, invertX=False):
+    def __init__(self, window_title='', draw_crosshairs = False):
         super().__init__()
         self.setWindowTitle(window_title)
         self.setWindowFlags(self.windowFlags() | Qt.CustomizeWindowHint)
@@ -1820,7 +1830,8 @@ class ImageDisplayWindow(QMainWindow):
         pg.setConfigOptions(imageAxisOrder='row-major')
 
         self.graphics_widget = pg.GraphicsLayoutWidget()
-        self.graphics_widget.view = self.graphics_widget.addViewBox(invertX=invertX)
+        self.graphics_widget.view = self.graphics_widget.addViewBox()
+        self.graphics_widget.view.invertY()
 
         ## lock the aspect ratio so pixels are always square
         self.graphics_widget.view.setAspectLocked(True)

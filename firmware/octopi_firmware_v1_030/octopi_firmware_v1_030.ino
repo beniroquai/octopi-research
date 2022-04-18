@@ -47,6 +47,7 @@ static const int SET_LIM_SWITCH_POLARITY = 20;
 static const int CONFIGURE_STEPPER_DRIVER = 21;
 static const int SET_MAX_VELOCITY_ACCELERATION = 22;
 static const int SET_LEAD_SCREW_PITCH = 23;
+static const int SET_OFFSET_VELOCITY = 24;
 static const int SEND_HARDWARE_TRIGGER = 30;
 static const int SET_STROBE_DELAY = 31;
 
@@ -93,11 +94,11 @@ static const int Z_dir = 27;
 static const int Z_step = 29;
 
 // illumination
-static const int LED = 30;
 static const int LASER_405nm = 31;
 static const int LASER_488nm = 32;
 static const int LASER_638nm = 33;
 static const int LASER_561nm = 34;
+static const int LASER_730nm = 30;
 
 // camera trigger 
 static const int camera_trigger_pins[] = {35,36,37,38,39}; // to replace
@@ -178,6 +179,9 @@ long target_position;
 volatile int32_t X_pos = 0;
 volatile int32_t Y_pos = 0;
 volatile int32_t Z_pos = 0;
+
+float offset_velocity_x = 0;
+float offset_velocity_y = 0;
 
 bool closed_loop_position_control = false;
 
@@ -264,6 +268,7 @@ static const int ILLUMINATION_SOURCE_405NM = 11;
 static const int ILLUMINATION_SOURCE_488NM = 12;
 static const int ILLUMINATION_SOURCE_638NM = 13;
 static const int ILLUMINATION_SOURCE_561NM = 14;
+static const int ILLUMINATION_SOURCE_730NM = 15;
 
 Adafruit_DotStar matrix(DOTSTAR_NUM_LEDS, DOTSTAR_BRG);
 void set_all(Adafruit_DotStar & matrix, int r, int g, int b);
@@ -302,7 +307,6 @@ void turn_on_illumination()
       turn_on_LED_matrix_pattern(matrix,ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT,led_matrix_r,led_matrix_g,led_matrix_b);
       break;
     case ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
-      digitalWrite(LED,HIGH);
       break;
     case ILLUMINATION_SOURCE_405NM:
       digitalWrite(LASER_405nm,HIGH);
@@ -315,6 +319,9 @@ void turn_on_illumination()
       break;
     case ILLUMINATION_SOURCE_561NM:
       digitalWrite(LASER_561nm,HIGH);
+      break;
+    case ILLUMINATION_SOURCE_730NM:
+      digitalWrite(LASER_730nm,HIGH);
       break;
   }
 }
@@ -345,7 +352,6 @@ void turn_off_illumination()
       clear_matrix(matrix);
       break;
     case ILLUMINATION_SOURCE_LED_EXTERNAL_FET:
-      digitalWrite(LED,LOW);
       break;
     case ILLUMINATION_SOURCE_405NM:
       digitalWrite(LASER_405nm,LOW);
@@ -358,6 +364,9 @@ void turn_off_illumination()
       break;
     case ILLUMINATION_SOURCE_561NM:
       digitalWrite(LASER_561nm,LOW);
+      break;
+    case ILLUMINATION_SOURCE_730NM:
+      digitalWrite(LASER_730nm,LOW);
       break;
   }
   illumination_is_on = false;
@@ -403,9 +412,6 @@ void setup() {
   }
   
   // enable pins
-  pinMode(LED, OUTPUT);
-  digitalWrite(LED, LOW);
-
   pinMode(LASER_405nm, OUTPUT);
   digitalWrite(LASER_405nm, LOW);
 
@@ -418,7 +424,8 @@ void setup() {
   pinMode(LASER_561nm, OUTPUT);
   digitalWrite(LASER_561nm, LOW);
 
-  digitalWrite(LED, LOW);
+  pinMode(LASER_730nm, OUTPUT);
+  digitalWrite(LASER_730nm, LOW);
   
   pinMode(X_dir, OUTPUT);
   pinMode(X_step, OUTPUT);
@@ -500,6 +507,9 @@ void setup() {
   X_pos = 0;
   Y_pos = 0;
   Z_pos = 0;
+
+  offset_velocity_x = 0;
+  offset_velocity_y = 0;
 
   // limit switch
   // configured by the computer instead
@@ -710,6 +720,8 @@ void loop() {
             case AXIS_X:
             {
               int microstepping_setting = buffer_rx[3];
+              if(microstepping_setting>128)
+                microstepping_setting = 256;
               X_driver.microsteps(microstepping_setting);
               MICROSTEPPING_X = microstepping_setting==0?1:microstepping_setting;
               steps_per_mm_X = FULLSTEPS_PER_REV_X*MICROSTEPPING_X/SCREW_PITCH_X_MM;
@@ -721,6 +733,8 @@ void loop() {
             case AXIS_Y:
             {
               int microstepping_setting = buffer_rx[3];
+              if(microstepping_setting>128)
+                microstepping_setting = 256;
               Y_driver.microsteps(microstepping_setting);
               MICROSTEPPING_Y = microstepping_setting==0?1:microstepping_setting;
               steps_per_mm_Y = FULLSTEPS_PER_REV_Y*MICROSTEPPING_Y/SCREW_PITCH_Y_MM;
@@ -732,6 +746,8 @@ void loop() {
             case AXIS_Z:
             {
               int microstepping_setting = buffer_rx[3];
+              if(microstepping_setting>128)
+                microstepping_setting = 256;
               Z_driver.microsteps(microstepping_setting);
               MICROSTEPPING_Z = microstepping_setting==0?1:microstepping_setting;
               steps_per_mm_Z = FULLSTEPS_PER_REV_Z*MICROSTEPPING_Z/SCREW_PITCH_Z_MM;
@@ -947,6 +963,30 @@ void loop() {
             mcu_cmd_execution_in_progress = true;
           }
           break;
+        }
+        case SET_OFFSET_VELOCITY:
+        {
+          if(enable_offset_velocity)
+          {
+            switch(buffer_rx[2])
+            {
+              case AXIS_X:
+                offset_velocity_x = float( int32_t(uint32_t(buffer_rx[2])*16777216 + uint32_t(buffer_rx[3])*65536 + uint32_t(buffer_rx[4])*256 + uint32_t(buffer_rx[5])) )/1000000;
+                if( abs(offset_velocity_x)>0.000005 )
+                  runSpeed_flag_X = true;
+                else
+                  runSpeed_flag_X = false;
+                break;
+              case AXIS_Y:
+                offset_velocity_y = float( int32_t(uint32_t(buffer_rx[2])*16777216 + uint32_t(buffer_rx[3])*65536 + uint32_t(buffer_rx[4])*256 + uint32_t(buffer_rx[5])) )/1000000;
+                if( abs(offset_velocity_y)>0.000005 )
+                  runSpeed_flag_Y = true;
+                else
+                  runSpeed_flag_Y = false;
+                break;
+            }
+            break;
+          }
         }
         case TURN_ON_ILLUMINATION:
         {
@@ -1180,25 +1220,36 @@ void loop() {
     {
       deltaX = analogRead(joystick_X) - joystick_offset_x;
       deltaX_float = JOYSTICK_SIGN_X*deltaX;
+      // joystick at motion position
       if(abs(deltaX_float)>joystickSensitivity)
       {
-        stepper_X.setSpeed(sgn(deltaX_float)*((abs(deltaX_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_X_mm*steps_per_mm_X);
+        stepper_X.setSpeed( offset_velocity_x*steps_per_mm_X + sgn(deltaX_float)*((abs(deltaX_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_X_mm*steps_per_mm_X );
         runSpeed_flag_X = true;
+        // handle limits
         if(stepper_X.currentPosition()>=X_POS_LIMIT && deltaX_float>0)
         {
           runSpeed_flag_X = false;
           stepper_X.setSpeed(0);
         }
         if(stepper_X.currentPosition()<=X_NEG_LIMIT && deltaX_float<0)
-          {
+        {
           runSpeed_flag_X = false;
           stepper_X.setSpeed(0);
         }
       }
+      // joystick at rest position
       else
       {
-        runSpeed_flag_X = false;
-        stepper_X.setSpeed(0);
+        if(enable_offset_velocity)
+        {
+          runSpeed_flag_X = true;
+          stepper_X.setSpeed( offset_velocity_x*steps_per_mm_X );
+        }
+        else
+        {
+          runSpeed_flag_X = false;
+          stepper_X.setSpeed( 0 );
+        }
       }
     }
 
@@ -1207,10 +1258,12 @@ void loop() {
     {
       deltaY = analogRead(joystick_Y) - joystick_offset_y;
       deltaY_float = JOYSTICK_SIGN_Y*deltaY;
+      // joystick at motion position
       if(abs(deltaY)>joystickSensitivity)
       {
-        stepper_Y.setSpeed(sgn(deltaY_float)*((abs(deltaY_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_Y_mm*steps_per_mm_Y);
+        stepper_Y.setSpeed( offset_velocity_y*steps_per_mm_Y + sgn(deltaY_float)*((abs(deltaY_float)-joystickSensitivity)/512.0)*speed_XY_factor*MAX_VELOCITY_Y_mm*steps_per_mm_Y);
         runSpeed_flag_Y = true;
+        // handle limits
         if(stepper_Y.currentPosition()>=Y_POS_LIMIT && deltaY_float>0)
         {
           runSpeed_flag_Y = false;
@@ -1222,13 +1275,47 @@ void loop() {
           stepper_Y.setSpeed(0);
         }
       }
+      // joystick at rest position
       else
       {
-        runSpeed_flag_Y = false;
-        stepper_Y.setSpeed(0);
+        if(enable_offset_velocity)
+        {
+          runSpeed_flag_Y = true;
+          stepper_Y.setSpeed( offset_velocity_y*steps_per_mm_Y );
+        }
+        else
+        {
+          runSpeed_flag_Y = false;
+          stepper_Y.setSpeed( 0 );
+        }
       }
     }
+
+    // set the read joystick flag to false
     flag_read_joystick = false;
+    
+  }
+
+  // handle limits
+  if( stepper_X.currentPosition()>=X_POS_LIMIT && offset_velocity_x>0 )
+  {
+    runSpeed_flag_X = false;
+    stepper_X.setSpeed( 0 );
+  }
+  if( stepper_X.currentPosition()<=X_NEG_LIMIT && offset_velocity_x<0 )
+  {
+    runSpeed_flag_X = false;
+    stepper_X.setSpeed( 0 );
+  }
+  if( stepper_Y.currentPosition()>=Y_POS_LIMIT && offset_velocity_y>0 )
+  {
+    runSpeed_flag_Y = false;
+    stepper_Y.setSpeed( 0 );
+  }
+  if( stepper_Y.currentPosition()<=Y_NEG_LIMIT && offset_velocity_y<0 )
+  {
+    runSpeed_flag_Y = false;
+    stepper_Y.setSpeed( 0 );
   }
   
   // focus control

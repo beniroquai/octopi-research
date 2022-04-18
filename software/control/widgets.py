@@ -8,6 +8,8 @@ from qtpy.QtCore import *
 from qtpy.QtWidgets import *
 from qtpy.QtGui import *
 
+from datetime import datetime
+
 from control._def import *
 
 class CameraSettingsWidget(QFrame):
@@ -241,14 +243,15 @@ class LiveControlWidget(QFrame):
         grid_line3.addWidget(QLabel('Display Resolution'), 0,2)
         grid_line3.addWidget(self.slider_resolutionScaling,0,3)
 
-        self.grid = QGridLayout()
+        self.grid = QVBoxLayout()
         if show_trigger_options:
-            self.grid.addLayout(grid_line0,0,0)
-        self.grid.addLayout(grid_line1,1,0)
-        self.grid.addLayout(grid_line2,2,0)
-        self.grid.addLayout(grid_line4,3,0)
+            self.grid.addLayout(grid_line0)
+        self.grid.addLayout(grid_line1)
+        self.grid.addLayout(grid_line2)
+        self.grid.addLayout(grid_line4)
         if show_display_options:
-            self.grid.addLayout(grid_line3,4,0)
+            self.grid.addLayout(grid_line3)
+        self.grid.addStretch()
         self.setLayout(self.grid)
 
     def toggle_live(self,pressed):
@@ -297,6 +300,10 @@ class LiveControlWidget(QFrame):
     def set_microscope_mode(self,config):
         # self.liveController.set_microscope_mode(config)
         self.dropdown_modeSelection.setCurrentText(config.name)
+
+    def set_trigger_mode(self,trigger_mode):
+        self.dropdown_triggerManu.setCurrentText(trigger_mode)
+        self.liveController.set_trigger_mode(self.dropdown_triggerManu.currentText())
 
 class RecordingWidget(QFrame):
     def __init__(self, streamHandler, imageSaver, main=None, *args, **kwargs):
@@ -713,6 +720,7 @@ class AutoFocusWidget(QFrame):
         self.entry_delta.setSingleStep(0.2)
         self.entry_delta.setDecimals(3)
         self.entry_delta.setValue(1.524)
+        self.entry_delta.setKeyboardTracking(False)
         self.autofocusController.set_deltaZ(1.524)
 
         self.entry_N = QSpinBox()
@@ -720,6 +728,7 @@ class AutoFocusWidget(QFrame):
         self.entry_N.setMaximum(20) 
         self.entry_N.setSingleStep(1)
         self.entry_N.setValue(10)
+        self.entry_N.setKeyboardTracking(False)
         self.autofocusController.set_N(10)
 
         self.btn_autofocus = QPushButton('Autofocus')
@@ -1404,3 +1413,182 @@ class PlateReaderNavigationWidget(QFrame):
         column = location_str[1:]
         self.dropdown_row.setCurrentText(row)
         self.dropdown_column.setCurrentText(column)
+
+
+class TriggerControlWidget(QFrame):
+    # for synchronized trigger 
+    signal_toggle_live = Signal(bool)
+    signal_trigger_mode = Signal(str)
+    signal_trigger_fps = Signal(float)
+
+    def __init__(self, microcontroller2):
+        super().__init__()
+        self.fps_trigger = 10
+        self.fps_display = 10
+        self.microcontroller2 = microcontroller2
+        self.triggerMode = TriggerMode.SOFTWARE
+        self.add_components()
+        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+
+    def add_components(self):
+        # line 0: trigger mode
+        self.triggerMode = None
+        self.dropdown_triggerManu = QComboBox()
+        self.dropdown_triggerManu.addItems([TriggerMode.SOFTWARE,TriggerMode.HARDWARE])
+
+        # line 1: fps
+        self.entry_triggerFPS = QDoubleSpinBox()
+        self.entry_triggerFPS.setMinimum(0.02) 
+        self.entry_triggerFPS.setMaximum(1000) 
+        self.entry_triggerFPS.setSingleStep(1)
+        self.entry_triggerFPS.setValue(self.fps_trigger)
+
+        self.btn_live = QPushButton("Live")
+        self.btn_live.setCheckable(True)
+        self.btn_live.setChecked(False)
+        self.btn_live.setDefault(False)
+
+        # connections
+        self.dropdown_triggerManu.currentIndexChanged.connect(self.update_trigger_mode)
+        self.btn_live.clicked.connect(self.toggle_live)
+        self.entry_triggerFPS.valueChanged.connect(self.update_trigger_fps)
+
+        # inititialization
+        self.microcontroller2.set_camera_trigger_frequency(self.fps_trigger)
+
+        # layout
+        grid_line0 = QGridLayout()
+        grid_line0.addWidget(QLabel('Trigger Mode'), 0,0)
+        grid_line0.addWidget(self.dropdown_triggerManu, 0,1)
+        grid_line0.addWidget(QLabel('Trigger FPS'), 0,2)
+        grid_line0.addWidget(self.entry_triggerFPS, 0,3)
+        grid_line0.addWidget(self.btn_live, 1,0,1,4)
+        self.setLayout(grid_line0)
+
+    def toggle_live(self,pressed):
+        self.signal_toggle_live.emit(pressed)
+        if pressed:
+            self.microcontroller2.start_camera_trigger()
+        else:
+            self.microcontroller2.stop_camera_trigger()
+
+    def update_trigger_mode(self):
+        self.signal_trigger_mode.emit(self.dropdown_triggerManu.currentText())
+
+    def update_trigger_fps(self,fps):
+        self.fps_trigger = fps
+        self.signal_trigger_fps.emit(fps)
+        self.microcontroller2.set_camera_trigger_frequency(self.fps_trigger)
+
+class MultiCameraRecordingWidget(QFrame):
+    def __init__(self, streamHandler, imageSaver, channels, main=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.imageSaver = imageSaver # for saving path control
+        self.streamHandler = streamHandler
+        self.channels = channels
+        self.base_path_is_set = False
+        self.add_components()
+        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
+
+    def add_components(self):
+        self.btn_setSavingDir = QPushButton('Browse')
+        self.btn_setSavingDir.setDefault(False)
+        self.btn_setSavingDir.setIcon(QIcon('icon/folder.png'))
+        
+        self.lineEdit_savingDir = QLineEdit()
+        self.lineEdit_savingDir.setReadOnly(True)
+        self.lineEdit_savingDir.setText('Choose a base saving directory')
+
+        self.lineEdit_experimentID = QLineEdit()
+
+        self.entry_saveFPS = QDoubleSpinBox()
+        self.entry_saveFPS.setMinimum(0.02) 
+        self.entry_saveFPS.setMaximum(1000) 
+        self.entry_saveFPS.setSingleStep(1)
+        self.entry_saveFPS.setValue(1)
+        for channel in self.channels:
+            self.streamHandler[channel].set_save_fps(1)
+
+        self.entry_timeLimit = QSpinBox()
+        self.entry_timeLimit.setMinimum(-1) 
+        self.entry_timeLimit.setMaximum(60*60*24*30) 
+        self.entry_timeLimit.setSingleStep(1)
+        self.entry_timeLimit.setValue(-1)
+
+        self.btn_record = QPushButton("Record")
+        self.btn_record.setCheckable(True)
+        self.btn_record.setChecked(False)
+        self.btn_record.setDefault(False)
+
+        grid_line1 = QGridLayout()
+        grid_line1.addWidget(QLabel('Saving Path'))
+        grid_line1.addWidget(self.lineEdit_savingDir, 0,1)
+        grid_line1.addWidget(self.btn_setSavingDir, 0,2)
+
+        grid_line2 = QGridLayout()
+        grid_line2.addWidget(QLabel('Experiment ID'), 0,0)
+        grid_line2.addWidget(self.lineEdit_experimentID,0,1)
+
+        grid_line3 = QGridLayout()
+        grid_line3.addWidget(QLabel('Saving FPS'), 0,0)
+        grid_line3.addWidget(self.entry_saveFPS, 0,1)
+        grid_line3.addWidget(QLabel('Time Limit (s)'), 0,2)
+        grid_line3.addWidget(self.entry_timeLimit, 0,3)
+        grid_line3.addWidget(self.btn_record, 0,4)
+
+        self.grid = QGridLayout()
+        self.grid.addLayout(grid_line1,0,0)
+        self.grid.addLayout(grid_line2,1,0)
+        self.grid.addLayout(grid_line3,2,0)
+        self.setLayout(self.grid)
+
+        # add and display a timer - to be implemented
+        # self.timer = QTimer()
+
+        # connections
+        self.btn_setSavingDir.clicked.connect(self.set_saving_dir)
+        self.btn_record.clicked.connect(self.toggle_recording)
+        for channel in self.channels:
+            self.entry_saveFPS.valueChanged.connect(self.streamHandler[channel].set_save_fps)
+            self.entry_timeLimit.valueChanged.connect(self.imageSaver[channel].set_recording_time_limit)
+            self.imageSaver[channel].stop_recording.connect(self.stop_recording)
+
+    def set_saving_dir(self):
+        dialog = QFileDialog()
+        save_dir_base = dialog.getExistingDirectory(None, "Select Folder")
+        for channel in self.channels:
+            self.imageSaver[channel].set_base_path(save_dir_base)
+        self.lineEdit_savingDir.setText(save_dir_base)
+        self.save_dir_base = save_dir_base
+        self.base_path_is_set = True
+
+    def toggle_recording(self,pressed):
+        if self.base_path_is_set == False:
+            self.btn_record.setChecked(False)
+            msg = QMessageBox()
+            msg.setText("Please choose base saving directory first")
+            msg.exec_()
+            return
+        if pressed:
+            self.lineEdit_experimentID.setEnabled(False)
+            self.btn_setSavingDir.setEnabled(False)
+            experiment_ID = self.lineEdit_experimentID.text()
+            experiment_ID = experiment_ID + '_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%-S.%f')
+            os.mkdir(os.path.join(self.save_dir_base,experiment_ID))
+            for channel in self.channels:
+                self.imageSaver[channel].start_new_experiment(os.path.join(experiment_ID,channel),add_timestamp=False)
+                self.streamHandler[channel].start_recording()
+        else:
+            for channel in self.channels:
+                self.streamHandler[channel].stop_recording()
+            self.lineEdit_experimentID.setEnabled(True)
+            self.btn_setSavingDir.setEnabled(True)
+
+    # stop_recording can be called by imageSaver
+    def stop_recording(self):
+        self.lineEdit_experimentID.setEnabled(True)
+        self.btn_record.setChecked(False)
+        for channel in self.channels:
+            self.streamHandler[channel].stop_recording()
+        self.btn_setSavingDir.setEnabled(True)
+

@@ -314,6 +314,31 @@ class Microcontroller():
         # while self.mcu_cmd_execution_in_progress == True:
         #     time.sleep(self._motion_status_checking_interval)
 
+    def set_off_set_velocity_x(self,off_set_velocity):
+        # off_set_velocity is in mm/s
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_OFFSET_VELOCITY
+        cmd[2] = AXIS.X
+        off_set_velocity = off_set_velocity*1000000
+        payload = self._int_to_payload(off_set_velocity,4)
+        cmd[3] = payload >> 24
+        cmd[4] = (payload >> 16) & 0xff
+        cmd[5] = (payload >> 8) & 0xff
+        cmd[6] = payload & 0xff
+        self.send_command(cmd)
+
+    def set_off_set_velocity_y(self,off_set_velocity):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_OFFSET_VELOCITY
+        cmd[2] = AXIS.Y
+        off_set_velocity = off_set_velocity*1000000
+        payload = self._int_to_payload(off_set_velocity,4)
+        cmd[3] = payload >> 24
+        cmd[4] = (payload >> 16) & 0xff
+        cmd[5] = (payload >> 8) & 0xff
+        cmd[6] = payload & 0xff
+        self.send_command(cmd)
+
     def home_x(self):
         cmd = bytearray(self.tx_buffer_length)
         cmd[1] = CMD_SET.HOME_OR_ZERO
@@ -428,6 +453,8 @@ class Microcontroller():
         cmd[2] = axis
         if microstepping == 1:
             cmd[3] = 0
+        elif microstepping == 256:
+            cmd[3] = 255 # max of uint8 is 255 - will be changed to 255 after received by the MCU
         else:
             cmd[3] = microstepping
         cmd[4] = current_rms >> 8
