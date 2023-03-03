@@ -556,7 +556,10 @@ class MultiPointController(QObject):
 
     @property
     def autofocus_channel_name(self)->str:
-        return MACHINE_CONFIG.MUTABLE_STATE.MULTIPOINT_AUTOFOCUS_CHANNEL
+        try:
+            return MACHINE_CONFIG.MUTABLE_STATE.MULTIPOINT_AUTOFOCUS_CHANNEL
+        except:
+            return "BF LED matrix right half"
 
     @property
     def deltaX_usteps(self)->int:

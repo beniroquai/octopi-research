@@ -145,7 +145,7 @@ class MultiPointWidget(QObject):
         
         self.lineEdit_baseDir = QLineEdit()
         self.lineEdit_baseDir.setReadOnly(True)
-        self.lineEdit_baseDir.setText(MACHINE_CONFIG.DISPLAY.DEFAULT_SAVING_PATH)
+        self.lineEdit_baseDir.setText("./")#MACHINE_CONFIG.DISPLAY.DEFAULT_SAVING_PATH)
         self.base_path_is_set = True
 
         self.lineEdit_projectName = QLineEdit()
@@ -283,7 +283,7 @@ class MultiPointWidget(QObject):
             items=self.af_software_channel_names,
             current_index=self.af_software_channel_names.index(self.multipointController.autofocus_channel_name),
             tooltip=ComponentLabels.AF_CHANNEL_TOOLTIP,
-            enabled=MACHINE_CONFIG.DISPLAY.MULTIPOINT_SOFTWARE_AUTOFOCUS_ENABLE_BY_DEFAULT,
+            enabled=True, #MACHINE_CONFIG.DISPLAY.MULTIPOINT_SOFTWARE_AUTOFOCUS_ENABLE_BY_DEFAULT,
             on_currentIndexChanged=lambda index:setattr(MACHINE_CONFIG.MUTABLE_STATE,"MULTIPOINT_AUTOFOCUS_CHANNEL",self.af_software_channel_names[index])
         ).widget
 

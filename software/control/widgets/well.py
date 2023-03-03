@@ -76,7 +76,7 @@ class NavigationViewer(QFrame):
 
         self.set_wellplate_type(sample)
 
-        MACHINE_CONFIG.MUTABLE_STATE.wellplate_format_change.connect(self.set_wellplate_type)
+        #MACHINE_CONFIG.MUTABLE_STATE.wellplate_format_change.connect(self.set_wellplate_type)
 
         xy_pos_changed.connect(self.update_current_fov)
 
@@ -226,7 +226,7 @@ class WellSelectionWidget(QTableWidget):
         self.was_initialized=True
 
         self.itemSelectionChanged.connect(self.itemselectionchanged)
-        MACHINE_CONFIG.MUTABLE_STATE.wellplate_format_change.connect(self.set_wellplate_type)
+        #MACHINE_CONFIG.MUTABLE_STATE.wellplate_format_change.connect(self.set_wellplate_type)
 
     def itemselectionchanged(self):
         self.currently_selected_well_indices = []
@@ -405,7 +405,7 @@ class WellWidget(QWidget):
 
         self.interactive_widgets.wellplate_dropdown == Dropdown(
             items=self.wellplate_types,
-            current_index=self.wellplate_types.index(MACHINE_CONFIG.MUTABLE_STATE.WELLPLATE_FORMAT),
+            current_index=self.wellplate_types.index("Generic 96"),
             tooltip=wellplate_dropdown_tooltip_str,
             on_currentIndexChanged=self.change_wellplate_type_by_index
         ).widget
@@ -413,7 +413,7 @@ class WellWidget(QWidget):
         self.setLayout(VBox(
             self.interactive_widgets.well_selection == WellSelectionWidget(
                 move_to_index = on_move_to_index,
-                format = MACHINE_CONFIG.MUTABLE_STATE.WELLPLATE_FORMAT,
+                format = "Generic 96",# MACHINE_CONFIG.MUTABLE_STATE.WELLPLATE_FORMAT,
             ),
             HBox(
                 Label("Wellplate Type:").widget,
@@ -422,7 +422,7 @@ class WellWidget(QWidget):
                 self.interactive_widgets.clear_well_selection == Button("Clear selection",tooltip="Deselects all wells in the well selection widget above.",on_clicked=lambda _btn:self.interactive_widgets.well_selection.set_selected_wells(new_selection=[])).widget,
             ),
             self.interactive_widgets.navigation_viewer == NavigationViewer(
-                sample = MACHINE_CONFIG.MUTABLE_STATE.WELLPLATE_FORMAT,
+                sample = "Generic 96", #MACHINE_CONFIG.MUTABLE_STATE.WELLPLATE_FORMAT,
                 xy_pos_changed=xy_pos_changed,
             ),
 

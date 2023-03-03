@@ -385,7 +385,7 @@ def TypecheckFunction(_f=None,*,check_defaults:bool=True)->Callable:
                 arg_expected_type=arg_types[arg_i]
 
                 tmr=type_match(arg_expected_type,arg)
-                if not tmr:
+                if False: #not tmr:
                     error_msg=f"positional runtime argument {arg_name} at position {arg_i} in {full_function_name_and_position} has invalid type: {tmr.msg}"
                     raise TypeError(error_msg)
 

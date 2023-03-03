@@ -73,7 +73,7 @@ class NavigationWidget(QFrame):
             *([
                 [Grid([ Label(POS_X_LABEL,tooltip=POS_X_TOOLTIP).widget, self.label_Xpos, self.entry_dX, self.btn_moveX_forward, self.btn_moveX_backward, ]).layout],
                 [Grid([ Label(POS_Y_LABEL,tooltip=POS_Y_TOOLTIP).widget, self.label_Ypos, self.entry_dY, self.btn_moveY_forward, self.btn_moveY_backward, ]).layout],
-            ] if MACHINE_CONFIG.DISPLAY.SHOW_XY_MOVEMENT else []),
+            ] if False else []), #   MACHINE_CONFIG.DISPLAY.SHOW_XY_MOVEMENT else []),
             [Grid([ Label(POS_Z_LABEL,tooltip=POS_Z_TOOLTIP).widget, self.label_Zpos, self.entry_dZ, self.btn_moveZ_forward, self.btn_moveZ_backward, ]).layout],
             [Grid([ self.btn_zero_Z, self.btn_goToLoadingPosition ]).layout],
         ]

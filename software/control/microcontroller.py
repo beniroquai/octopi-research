@@ -425,7 +425,7 @@ class Microcontroller():
         cmd[2] = axis
         cmd[3] = polarity
         self.send_command(cmd)
-
+    
     @TypecheckFunction
     def configure_motor_driver(self,axis:int,microstepping:int,current_rms:int,I_hold:ClosedRange[float](0.0,1.0)):
         # current_rms in mA
@@ -444,7 +444,7 @@ class Microcontroller():
         cmd[5] = current_rms & 0xff
         cmd[6] = int(I_hold*255)
         self.send_command(cmd)
-
+    
     @TypecheckFunction
     def set_max_velocity_acceleration(self,axis:int,velocity:Union[int,float],acceleration:Union[int,float]):
         # velocity: max 65535/100 mm/s
@@ -586,10 +586,10 @@ class Microcontroller():
                 else:
                     self.resend_last_command()
             
-            self.x_pos = self._payload_to_int(msg[2:6],MicrocontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
-            self.y_pos = self._payload_to_int(msg[6:10],MicrocontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
-            self.z_pos = self._payload_to_int(msg[10:14],MicrocontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
-            self.theta_pos = self._payload_to_int(msg[14:18],MicrocontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            self.x_pos = self._payload_to_int(msg[2:6],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            self.y_pos = self._payload_to_int(msg[6:10],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            self.z_pos = self._payload_to_int(msg[10:14],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            self.theta_pos = self._payload_to_int(msg[14:18],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
             
             self.button_and_switch_state = msg[18]
             # joystick button
@@ -670,6 +670,378 @@ class Microcontroller():
         self.set_pin_level(MCU_PINS.AF_LASER,0)
         if not completion is None:
             self.wait_till_operation_is_completed(**completion)
+
+    @ property
+    def mm_per_ustep_x(self)->float:
+        return MACHINE_CONFIG.SCREW_PITCH_X_MM/(MACHINE_CONFIG.MICROSTEPPING_DEFAULT_X*MACHINE_CONFIG.FULLSTEPS_PER_REV_X)
+    @ property
+    def mm_per_ustep_y(self)->float:
+        return MACHINE_CONFIG.SCREW_PITCH_Y_MM/(MACHINE_CONFIG.MICROSTEPPING_DEFAULT_Y*MACHINE_CONFIG.FULLSTEPS_PER_REV_Y)
+    @ property
+    def mm_per_ustep_z(self)->float:
+        return MACHINE_CONFIG.SCREW_PITCH_Z_MM/(MACHINE_CONFIG.MICROSTEPPING_DEFAULT_Z*MACHINE_CONFIG.FULLSTEPS_PER_REV_Z)
+
+    @TypecheckFunction
+    def mm_to_ustep_x(self,value_mm:float)->int:
+        if MACHINE_CONFIG.USE_ENCODER_X:
+            return int(value_mm/(MACHINE_CONFIG.ENCODER_POS_SIGN_X*MACHINE_CONFIG.ENCODER_STEP_SIZE_X_MM))
+        else:
+            return int(value_mm/(MACHINE_CONFIG.STAGE_POS_SIGN_X*self.mm_per_ustep_x))
+    @TypecheckFunction
+    def mm_to_ustep_y(self,value_mm:float)->int:
+        if MACHINE_CONFIG.USE_ENCODER_Y:
+            return int(value_mm/(MACHINE_CONFIG.ENCODER_POS_SIGN_Y*MACHINE_CONFIG.ENCODER_STEP_SIZE_Y_MM))
+        else:
+            return int(value_mm/(MACHINE_CONFIG.STAGE_POS_SIGN_Y*self.mm_per_ustep_y))
+    @TypecheckFunction
+    def mm_to_ustep_z(self,value_mm:float)->int:
+        if MACHINE_CONFIG.USE_ENCODER_Z:
+            return int(value_mm/(MACHINE_CONFIG.ENCODER_POS_SIGN_Z*MACHINE_CONFIG.ENCODER_STEP_SIZE_Z_MM))
+        else:
+            return int(value_mm/(MACHINE_CONFIG.STAGE_POS_SIGN_Z*self.mm_per_ustep_z))
+
+    @TypecheckFunction
+    def ustep_to_mm_x(self,value_usteps:int)->float:
+        if MACHINE_CONFIG.USE_ENCODER_X:
+            return value_usteps*MACHINE_CONFIG.ENCODER_POS_SIGN_X*MACHINE_CONFIG.ENCODER_STEP_SIZE_X_MM
+        else:
+            return value_usteps*MACHINE_CONFIG.STAGE_POS_SIGN_X*self.mm_per_ustep_x
+    @TypecheckFunction
+    def ustep_to_mm_y(self,value_usteps:int)->float:
+        if MACHINE_CONFIG.USE_ENCODER_Y:
+            return value_usteps*MACHINE_CONFIG.ENCODER_POS_SIGN_Y*MACHINE_CONFIG.ENCODER_STEP_SIZE_Y_MM
+        else:
+            return value_usteps*MACHINE_CONFIG.STAGE_POS_SIGN_Y*self.mm_per_ustep_y
+    @TypecheckFunction
+    def ustep_to_mm_z(self,value_usteps:int)->float:
+        if MACHINE_CONFIG.USE_ENCODER_Z:
+            return value_usteps*MACHINE_CONFIG.ENCODER_POS_SIGN_Z*MACHINE_CONFIG.ENCODER_STEP_SIZE_Z_MM
+        else:
+            return value_usteps*MACHINE_CONFIG.STAGE_POS_SIGN_Z*self.mm_per_ustep_z
+
+    @property
+    def clear_z_backlash_usteps(self)->int:
+        return max(160,20*MACHINE_CONFIG.MICROSTEPPING_DEFAULT_Z)
+        
+    @property
+    def clear_z_backlash_mm(self)->float:
+        return self.clear_z_backlash_usteps*self.mm_per_ustep_z
+
+class Microcontroller_Simulation():
+    def __init__(self,version:ControllerType=ControllerType.DUE,sn:Optional[str]=None,parent:Any=None):
+        self.serial = None
+        self.platform_name = platform.system()
+        self.tx_buffer_length = MicrocontrollerDef.CMD_LENGTH
+        self.rx_buffer_length = MicrocontrollerDef.MSG_LENGTH
+
+        self._cmd_id = 0
+        self._cmd_id_mcu = None # command id of mcu's last received command 
+        self._cmd_execution_status = None
+        self.mcu_cmd_execution_in_progress = False
+
+        self.x_pos = 0 # unit: microstep or encoder resolution
+        self.y_pos = 0 # unit: microstep or encoder resolution
+        self.z_pos = 0 # unit: microstep or encoder resolution
+        self.theta_pos = 0 # unit: microstep or encoder resolution
+        self.button_and_switch_state = 0
+        self.joystick_button_pressed = 0
+        self.signal_joystick_button_pressed_event = False
+        self.switch_state = 0
+
+         # for simulation
+        self.timestamp_last_command = time.time() # for simulation only
+        self._mcu_cmd_execution_status = None
+        #self.timer_update_command_execution_status = 1 #QTimer()
+        #self.timer_update_command_execution_status.timeout.connect(self._simulation_update_cmd_execution_status)
+
+        self.new_packet_callback_external = None
+        self.terminate_reading_received_packet_thread = False
+        self.thread_read_received_packet = threading.Thread(target=self.read_received_packet, daemon=True)
+        self.thread_read_received_packet.start()
+
+    def close(self):
+        self.terminate_reading_received_packet_thread = True
+        self.thread_read_received_packet.join()
+
+    def move_x_usteps(self,usteps):
+        self.x_pos = self.x_pos + STAGE_MOVEMENT_SIGN_X*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move x')
+
+    def move_x_to_usteps(self,usteps):
+        self.x_pos = STAGE_MOVEMENT_SIGN_X*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move x to')
+
+    def move_y_usteps(self,usteps):
+        self.y_pos = self.y_pos + STAGE_MOVEMENT_SIGN_Y*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move y')
+
+    def reset(self):
+        pass
+    
+    def initialize_drivers(self):
+        pass
+    
+    def move_y_to_usteps(self,usteps):
+        self.y_pos = STAGE_MOVEMENT_SIGN_Y*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move y to')
+
+    def move_z_usteps(self,usteps):
+        self.z_pos = self.z_pos + STAGE_MOVEMENT_SIGN_Z*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move z')
+
+    def move_z_to_usteps(self,usteps):
+        self.z_pos = STAGE_MOVEMENT_SIGN_Z*usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': move z to')
+
+    def move_theta_usteps(self,usteps):
+        self.theta_pos = self.theta_pos + usteps
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+
+    def home_x(self):
+        self.x_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': home x')
+
+    def home_y(self):
+        self.y_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': home y')
+
+    def home_z(self):
+        self.z_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': home z')
+
+    def home_xy(self):
+        self.x_pos = 0
+        self.y_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': home xy')
+
+    def home_theta(self):
+        self.theta_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+
+    def zero_x(self):
+        self.x_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': zero x')
+
+    def zero_y(self):
+        self.y_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': zero y')
+
+    def zero_z(self):
+        self.z_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': zero z')
+
+    def zero_theta(self):
+        self.theta_pos = 0
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+
+    def set_lim(self,limit_code,usteps):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+
+    def configure_motor_driver(self,axis:int,microstepping:int,current_rms:int,I_hold:ClosedRange[float](0.0,1.0)):
+        # current_rms in mA
+        # I_hold 0.0-1.0
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.CONFIGURE_STEPPER_DRIVER
+        cmd[2] = axis
+        if microstepping == 1:
+            cmd[3] = 0
+        else:
+            cmd[3] = microstepping-1
+        cmd[4] = current_rms >> 8
+        cmd[5] = current_rms & 0xff
+        cmd[6] = int(I_hold*255)
+        self.send_command(cmd)
+
+    def set_max_velocity_acceleration(self,axis,velocity,acceleration):
+        # velocity: max 65535/100 mm/s
+        # acceleration: max 65535/10 mm/s^2
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_MAX_VELOCITY_ACCELERATION
+        cmd[2] = axis
+        cmd[3] = int(velocity*100) >> 8
+        cmd[4] = int(velocity*100) & 0xff
+        cmd[5] = int(acceleration*10) >> 8
+        cmd[6] = int(acceleration*10) & 0xff
+        self.send_command(cmd)
+
+    def set_leadscrew_pitch(self,axis,pitch_mm):
+        # pitch: max 65535/1000 = 65.535 (mm)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LEAD_SCREW_PITCH
+        cmd[2] = axis
+        cmd[3] = int(pitch_mm*1000) >> 8
+        cmd[4] = int(pitch_mm*1000) & 0xff
+        self.send_command(cmd)
+
+    def set_limit_switch_polarity(self,axis,polarity):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_LIM_SWITCH_POLARITY
+        cmd[2] = axis
+        cmd[3] = polarity
+        self.send_command(cmd)
+
+    def configure_actuators(self):
+        # lead screw pitch
+        self.set_leadscrew_pitch(AXIS.X,MACHINE_CONFIG.SCREW_PITCH_X_MM)
+        self.set_leadscrew_pitch(AXIS.Y,MACHINE_CONFIG.SCREW_PITCH_Y_MM)
+        self.set_leadscrew_pitch(AXIS.Z,MACHINE_CONFIG.SCREW_PITCH_Z_MM)
+        # stepper driver (microstepping,rms current and I_hold)
+        self.configure_motor_driver(AXIS.X,MACHINE_CONFIG.MICROSTEPPING_DEFAULT_X,MACHINE_CONFIG.X_MOTOR_RMS_CURRENT_mA,MACHINE_CONFIG.X_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Y,MACHINE_CONFIG.MICROSTEPPING_DEFAULT_Y,MACHINE_CONFIG.Y_MOTOR_RMS_CURRENT_mA,MACHINE_CONFIG.Y_MOTOR_I_HOLD)
+        self.configure_motor_driver(AXIS.Z,MACHINE_CONFIG.MICROSTEPPING_DEFAULT_Z,MACHINE_CONFIG.Z_MOTOR_RMS_CURRENT_mA,MACHINE_CONFIG.Z_MOTOR_I_HOLD)
+        # max velocity and acceleration
+        self.set_max_velocity_acceleration(AXIS.X,MACHINE_CONFIG.MAX_VELOCITY_X_mm,MACHINE_CONFIG.MAX_ACCELERATION_X_mm)
+        self.set_max_velocity_acceleration(AXIS.Y,MACHINE_CONFIG.MAX_VELOCITY_X_mm,MACHINE_CONFIG.MAX_ACCELERATION_Y_mm)
+        self.set_max_velocity_acceleration(AXIS.Z,MACHINE_CONFIG.MAX_VELOCITY_X_mm,MACHINE_CONFIG.MAX_ACCELERATION_Z_mm)
+        # home switch
+        self.set_limit_switch_polarity(AXIS.X,MACHINE_CONFIG.X_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Y,MACHINE_CONFIG.Y_HOME_SWITCH_POLARITY)
+        self.set_limit_switch_polarity(AXIS.Z,MACHINE_CONFIG.Z_HOME_SWITCH_POLARITY)
+
+    def analog_write_onboard_DAC(self,dac,value):
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.ANALOG_WRITE_ONBOARD_DAC
+        cmd[2] = dac
+        cmd[3] = (value >> 8) & 0xff
+        cmd[4] = value & 0xff
+        self.send_command(cmd)
+
+    def read_received_packet(self):
+        while self.terminate_reading_received_packet_thread == False:
+            # only for simulation - update the command execution status
+            if time.time() - self.timestamp_last_command > 0.05: # in the simulation, assume all the operation takes 0.05s to complete
+                if self._mcu_cmd_execution_status !=  CMD_EXECUTION_STATUS.COMPLETED_WITHOUT_ERRORS:
+                    self._mcu_cmd_execution_status = CMD_EXECUTION_STATUS.COMPLETED_WITHOUT_ERRORS
+                    print('   mcu command ' + str(self._cmd_id) + ' complete')
+
+            # read and parse message
+            msg=[]
+            for i in range(self.rx_buffer_length):
+                msg.append(0)
+
+            msg[0] = self._cmd_id
+            msg[1] = self._mcu_cmd_execution_status
+
+            self._cmd_id_mcu = msg[0]
+            self._cmd_execution_status = msg[1]
+            if (self._cmd_id_mcu == self._cmd_id) and (self._cmd_execution_status == CMD_EXECUTION_STATUS.COMPLETED_WITHOUT_ERRORS):
+                self.mcu_cmd_execution_in_progress = False
+            # print('mcu_cmd_execution_in_progress: ' + str(self.mcu_cmd_execution_in_progress))
+            
+            # self.x_pos = utils.unsigned_to_signed(msg[2:6],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            # self.y_pos = utils.unsigned_to_signed(msg[6:10],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            # self.z_pos = utils.unsigned_to_signed(msg[10:14],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            # self.theta_pos = utils.unsigned_to_signed(msg[14:18],MACHINE_CONFIG.MICROcontrollerDef.N_BYTES_POS) # unit: microstep or encoder resolution
+            
+            self.button_and_switch_state = msg[18]
+
+            if self.new_packet_callback_external is not None:
+                self.new_packet_callback_external(self)
+
+            time.sleep(0.005) # simulate MCU packet transmission interval
+
+    def turn_on_illumination(self):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': turn on illumination')
+
+    def turn_off_illumination(self):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': turn off illumination')
+
+    def set_illumination(self,illumination_source,intensity):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': set illumination')
+
+    def set_illumination_led_matrix(self,illumination_source,r,g,b):
+        cmd = bytearray(self.tx_buffer_length)
+        self.send_command(cmd)
+        print('   mcu command ' + str(self._cmd_id) + ': set illumination (led matrix)')
+
+    def send_hardware_trigger(self,control_illumination=False,illumination_on_time_us=0,trigger_output_ch = 0):
+        illumination_on_time_us = int(illumination_on_time_us)
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SEND_HARDWARE_TRIGGER
+        cmd[2] = (control_illumination<<7) + trigger_output_ch # MSB: whether illumination is controlled
+        cmd[3] = illumination_on_time_us >> 24
+        cmd[4] = (illumination_on_time_us >> 16) & 0xff
+        cmd[5] = (illumination_on_time_us >> 8) & 0xff
+        cmd[6] = illumination_on_time_us & 0xff
+        self.send_command(cmd)
+
+    def set_strobe_delay_us(self, strobe_delay_us, camera_channel=0):
+        print('set strobe delay')
+        cmd = bytearray(self.tx_buffer_length)
+        cmd[1] = CMD_SET.SET_STROBE_DELAY
+        cmd[2] = camera_channel
+        cmd[3] = strobe_delay_us >> 24
+        cmd[4] = (strobe_delay_us >> 16) & 0xff
+        cmd[5] = (strobe_delay_us >> 8) & 0xff
+        cmd[6] = strobe_delay_us & 0xff
+        self.send_command(cmd)
+
+    def get_pos(self):
+        return self.x_pos, self.y_pos, self.z_pos, self.theta_pos
+
+    def get_button_and_switch_state(self):
+        return self.button_and_switch_state
+
+    def set_callback(self,function):
+        self.new_packet_callback_external = function
+
+    def is_busy(self):
+        return self.mcu_cmd_execution_in_progress
+
+    def send_command(self,command):
+        self._cmd_id = (self._cmd_id + 1)%256
+        command[0] = self._cmd_id
+        # command[self.tx_buffer_length-1] = self._calculate_CRC(command)
+        self.mcu_cmd_execution_in_progress = True
+        # for simulation
+        self._mcu_cmd_execution_status = CMD_EXECUTION_STATUS.IN_PROGRESS
+        # self.timer_update_command_execution_status.setInterval(2000)
+        # self.timer_update_command_execution_status.start()
+        # print('start timer')
+        # timer cannot be started from another thread
+        self.timestamp_last_command = time.time()
+
+    def _simulation_update_cmd_execution_status(self):
+        # print('simulation - MCU command execution finished')
+        # self._mcu_cmd_execution_status = CMD_EXECUTION_STATUS.COMPLETED_WITHOUT_ERRORS
+        # self.timer_update_command_execution_status.stop()
+        pass # timer cannot be started from another thread
 
     @ property
     def mm_per_ustep_x(self)->float:

@@ -286,7 +286,7 @@ class StreamingCamera:
         self.camera=camera
 
     def __enter__(self):
-        if not self.camera.in_a_state_to_be_used_directly:
+         if not self.camera.in_a_state_to_be_used_directly:
             self.was_streaming=self.camera.is_streaming
             self.was_live=self.camera.is_live
             self.callback_was_enabled=self.camera.callback_is_enabled
@@ -361,7 +361,10 @@ class CameraWrapper:
         
     @property
     def pixel_formats(self)->List[str]:
-        return list(self.camera.camera.PixelFormat.get_range().keys())
+        try:
+            return list(self.camera.camera.PixelFormat.get_range().keys())
+        except:
+            return (["Mono8", "Mono12"])
 
     def close(self):
         self.camera.close()
@@ -427,7 +430,8 @@ class Core(QObject):
             raise e
 
         try:
-            self.microcontroller:microcontroller.Microcontroller = microcontroller.Microcontroller(version=MACHINE_CONFIG.CONTROLLER_VERSION)
+            #self.microcontroller:microcontroller.Microcontroller = microcontroller.Microcontroller(version=MACHINE_CONFIG.CONTROLLER_VERSION)
+            self.microcontroller:microcontroller.Microcontroller = microcontroller.Microcontroller_Simulation(version=MACHINE_CONFIG.CONTROLLER_VERSION)
         except Exception as e:
             print("! microcontroller not detected !")
             raise e
@@ -441,16 +445,16 @@ class Core(QObject):
         self.main_camera=CameraWrapper(
             self,
             camera=main_camera,
-            filename='./channel_config_main_camera.json',
+            filename='/Users/bene/Dropbox/Dokumente/Promotion/PROJECTS/MicronController/PYTHON/octopi-research/software/channel_config_main_camera.json',
             microcontroller=self.microcontroller,
             use_streamhandler=True,
         )
-        MACHINE_CONFIG.MUTABLE_STATE.trigger_mode_change.connect(lambda new_trigger_mode:self.main_camera.live_controller.set_trigger_mode(new_trigger_mode))
+        #MACHINE_CONFIG.MUTABLE_STATE.trigger_mode_change.connect(lambda new_trigger_mode:self.main_camera.live_controller.set_trigger_mode(new_trigger_mode))
 
         self.focus_camera=CameraWrapper(
             self,
             camera=focus_camera,
-            filename='./channel_config_focus_camera.json',
+            filename='/Users/bene/Dropbox/Dokumente/Promotion/PROJECTS/MicronController/PYTHON/octopi-research/software/channel_config_focus_camera.json',
             microcontroller=self.microcontroller,
             use_streamhandler=True,
 

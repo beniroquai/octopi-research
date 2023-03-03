@@ -857,10 +857,10 @@ WELLPLATE_FORMATS: Dict[str, WellplateFormatPhysical] = {
 WELLPLATE_NAMES = set(WELLPLATE_FORMATS.keys())
 
 WELLPLATE_TYPE_IMAGE = {
-    384: 'images/384_well_plate_1509x1010.png',
-    96: 'images/96_well_plate_1509x1010.png',
+    384: '/Users/bene/Dropbox/Dokumente/Promotion/PROJECTS/MicronController/PYTHON/octopi-research/software/images/384_well_plate_1509x1010.png',
+    96: '/Users/bene/Dropbox/Dokumente/Promotion/PROJECTS/MicronController/PYTHON/octopi-research/software/images/96_well_plate_1509x1010.png',
     # 24  : 'images/24_well_plate_1509x1010.png', # these files dont exist
-    12: 'images/12_well_plate_1509x1010.png',
+    12: '/Users/bene/Dropbox/Dokumente/Promotion/PROJECTS/MicronController/PYTHON/octopi-research/software/images/12_well_plate_1509x1010.png',
     # 6   : 'images/6_well_plate_1509x1010.png', # these files dont exist
 }
 
