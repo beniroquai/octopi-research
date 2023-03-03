@@ -410,7 +410,8 @@ class Core(QObject):
         # load objects
         try:
             sn_camera_main = camera.get_sn_by_model(MACHINE_CONFIG.MAIN_CAMERA_MODEL)
-            main_camera = camera.Camera(sn=sn_camera_main,rotate_image_angle=MACHINE_CONFIG.ROTATE_IMAGE_ANGLE,flip_image=MACHINE_CONFIG.FLIP_IMAGE)
+            main_camera = camera.Camera_Simulation(sn=sn_camera_main,rotate_image_angle=MACHINE_CONFIG.ROTATE_IMAGE_ANGLE,flip_image=MACHINE_CONFIG.FLIP_IMAGE)
+            #main_camera = camera.Camera(sn=sn_camera_main,rotate_image_angle=MACHINE_CONFIG.ROTATE_IMAGE_ANGLE,flip_image=MACHINE_CONFIG.FLIP_IMAGE)
             main_camera.open()
         except Exception as e:
             print('! imaging camera not detected !')
@@ -418,7 +419,8 @@ class Core(QObject):
 
         try:
             sn_camera_focus = camera.get_sn_by_model(MACHINE_CONFIG.FOCUS_CAMERA_MODEL)
-            focus_camera = camera.Camera(sn=sn_camera_focus,used_for_laser_autofocus=True)
+            focus_camera = camera.Camera_Simulation(sn=sn_camera_focus,used_for_laser_autofocus=True)
+            #focus_camera = camera.Camera(sn=sn_camera_focus,used_for_laser_autofocus=True)
             focus_camera.open()
         except Exception as e:
             print('! laser AF camera not detected !')
