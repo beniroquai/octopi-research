@@ -4,7 +4,7 @@ import serial.tools.list_ports
 import time
 import numpy as np
 import threading
-from crc import CrcCalculator, Crc8
+from crc import Calculator, Crc8
 
 from control._def import MACHINE_CONFIG, ControllerType, MicrocontrollerDef, CMD_SET, AXIS, HOME_OR_ZERO, CMD_EXECUTION_STATUS, BIT_POS_JOYSTICK_BUTTON, BIT_POS_SWITCH, MCU_PINS
 
@@ -46,7 +46,7 @@ class Microcontroller():
         self.timeout_counter = 0
         self.last_command_timestamp = time.time()
 
-        self.crc_calculator = CrcCalculator(Crc8.CCITT,table_based=True)
+        self.crc_calculator = Calculator(Crc8.CCITT,table_based=True)
         self.retry = 0
 
         print(f'startup - connecting to controller based on {version.value}')

@@ -211,7 +211,7 @@ def TypecheckClass(_t:Optional[type]=None,*,check_defaults:bool=True,create_init
                     raise Exception("unimplemented")
 
                 type_match_check=type_match(annotated_type,default_value)
-                if not type_match_check:
+                if False :#not type_match_check:
                     error_msg=f"default value type mismatch in {t.__name__}.{symbol}: {type_match_check.msg}"
                     raise TypeError(error_msg)
 

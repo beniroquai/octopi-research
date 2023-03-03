@@ -11,13 +11,13 @@ if sys.platform == 'linux2' or sys.platform == 'linux':
         dll = CDLL('/usr/lib/libgxiapi.so')
     except OSError:
         print('Cannot find libgxiapi.so.')
-else:
+elif sys.platform == 'win32':
     try:
         dll = WinDLL('DxImageProc.dll')
     except OSError:
         print('Cannot find DxImageProc.dll.')
-
-
+else:
+    dll = None
 # status  definition
 class DxStatus:
     OK = 0                               # Operation is successful

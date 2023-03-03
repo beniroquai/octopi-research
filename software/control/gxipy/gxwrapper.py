@@ -11,11 +11,13 @@ if sys.platform == 'linux2' or sys.platform == 'linux':
         dll = CDLL('/usr/lib/libgxiapi.so')
     except OSError:
         print("Cannot find libgxiapi.so.")
-else:
+elif sys.platform == 'win32':
     try:
         dll = WinDLL('GxIAPI.dll')
     except OSError:
         print('Cannot find GxIAPI.dll.')
+else:
+    dll = None
 
 
 # Error code
@@ -431,8 +433,7 @@ class GxEnumDescription(Structure):
     def __str__(self):
         return "GxEnumDescription\n%s" % "\n".join("%s:\t%s" % (n, getattr(self, n[0])) for n in self._fields_)
 
-
-if hasattr(dll, 'GXInitLib'):
+if dll is not None and hasattr(dll, 'GXInitLib'):
     def gx_init_lib():
         """
         :brief      Initialize the device library for some resource application operations
