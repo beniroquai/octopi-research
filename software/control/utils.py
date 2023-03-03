@@ -1,7 +1,15 @@
 import cv2
 from numpy import std, square, mean
+import numpy as np
 
-def crop_image(image,crop_width,crop_height):
+from typing import Optional, Union
+from control._def import FocusMeasureOperators
+from control.typechecker import TypecheckFunction
+
+ImageType=Union[cv2.Mat,np.ndarray]
+
+@TypecheckFunction
+def crop_image(image:ImageType,crop_width:int,crop_height:int)->ImageType:
     image_height = image.shape[0]
     image_width = image.shape[1]
     roi_left = int(max(image_width/2 - crop_width/2,0))
@@ -11,44 +19,48 @@ def crop_image(image,crop_width,crop_height):
     image_cropped = image[roi_top:roi_bottom,roi_left:roi_right]
     return image_cropped
 
-def calculate_focus_measure(image):
-	if len(image.shape) == 3:
-		image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY) # optional
-	lap = cv2.Laplacian(image,cv2.CV_16S)
-	focus_measure = mean(square(lap))
-	return focus_measure
+@TypecheckFunction
+def calculate_focus_measure(image:ImageType,method:FocusMeasureOperators=FocusMeasureOperators.LAPE) -> float:
+    if len(image.shape) == 3:
+        image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY) # optional
 
-def unsigned_to_signed(unsigned_array,N):
-    signed = 0
-    for i in range(N):
-        signed = signed + int(unsigned_array[i])*(256**(N-1-i))
-    signed = signed - (256**N)/2
-    return signed
+    if method == FocusMeasureOperators.LAPE:
+        if image.dtype == np.uint16:
+            lap = cv2.Laplacian(image,cv2.CV_32F)
+        else:
+            lap = cv2.Laplacian(image,cv2.CV_16S)
 
-def rotate_and_flip_image(image,rotate_image_angle,flip_image):
+        focus_measure:float = mean(square(lap)) # type: ignore
+
+    elif method == FocusMeasureOperators.GLVA:
+        focus_measure:float = np.std(image, axis=None) #type: ignore
+
+    else:
+        assert False, f"{method} is an invalid focus measure method"
+
+    return float(focus_measure)
+
+@TypecheckFunction
+def rotate_and_flip_image(image:ImageType,rotate_image_angle:int,flip_image:Optional[str]) -> ImageType:
     if(rotate_image_angle != 0):
-        '''
-            # ROTATE_90_CLOCKWISE
-            # ROTATE_90_COUNTERCLOCKWISE
-        '''
-        if(rotate_image_angle == 90):
-            image = cv2.rotate(image,cv2.ROTATE_90_CLOCKWISE)
-        elif(rotate_image_angle == -90):
-            image = cv2.rotate(image,cv2.ROTATE_90_COUNTERCLOCKWISE)
-        elif(rotate_image_angle == 180):
-            image = cv2.rotate(image,cv2.ROTATE_180)
+        try:
+            rotation_flag={
+                -90:  cv2.ROTATE_90_COUNTERCLOCKWISE,
+                 90:  cv2.ROTATE_90_CLOCKWISE,
+                 180: cv2.ROTATE_180
+            }[rotate_image_angle]
+            
+            image = cv2.rotate(image,rotation_flag)
+        except:
+            assert False, "invalid rotation angle (is not 0|90|-90|180)"
 
     if(flip_image is not None):
-        '''
-            flipcode = 0: flip vertically
-            flipcode > 0: flip horizontally
-            flipcode < 0: flip vertically and horizontally
-        '''
-        if(flip_image == 'Vertical'):
-            image = cv2.flip(image, 0)
-        elif(flip_image == 'Horizontal'):
-            image = cv2.flip(image, 1)
-        elif(flip_image == 'Both'):
-            image = cv2.flip(image, -1)
+        flipcode={
+            'Vertical':   0, # flipcode = 0: flip vertically
+            'Horizontal': 1, # flipcode > 0: flip horizontally
+            'Both':      -1  # flipcode < 0: flip vertically and horizontally
+        }[flip_image]
+
+        image = cv2.flip(image, flipcode)
 
     return image

@@ -1,0 +1,14 @@
+{
+  "channels_config": [
+    {
+      "ID": 1,
+      "Name": "BF LED matrix full",
+      "IlluminationSource": 0,
+      "ExposureTime": 2.0,
+      "AnalogGain": 0.0,
+      "IlluminationIntensity": 5.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    }
+  ]
+}

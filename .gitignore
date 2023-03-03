@@ -1,4 +1,5 @@
 .DS_Store
 *.pyc
-DATA/
-*.xml
+.mypy_cache
+last_program_state.json
+*.prof

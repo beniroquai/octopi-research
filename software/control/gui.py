@@ -1,174 +1,621 @@
-# set QT_API environment variable
-import os 
-os.environ["QT_API"] = "pyqt5"
-import qtpy
+from qtpy.QtCore import Qt
+from qtpy.QtWidgets import QFrame, QPushButton, QLineEdit, QDoubleSpinBox, \
+    QSpinBox, QListWidget, QGridLayout, QCheckBox, QLabel, QAbstractItemView, \
+    QComboBox, QHBoxLayout, QVBoxLayout, QMessageBox, QFileDialog, QProgressBar, \
+    QDesktopWidget, QWidget, QTableWidget, QSizePolicy, QTableWidgetItem, \
+    QApplication, QTabWidget, QStyleOption, QStyle
+from qtpy.QtGui import QIcon, QPainter
 
-# qt libraries
-from qtpy.QtCore import *
-from qtpy.QtWidgets import *
-from qtpy.QtGui import *
-
-# app specific libraries
-import control.widgets as widgets
-import control.camera as camera
-import control.core as core
-import control.microcontroller as microcontroller
-from control._def import *
+from typing import Optional, Union, List, Tuple, Callable, Any
 
 import pyqtgraph.dockarea as dock
-SINGLE_WINDOW = True # set to False if use separate windows for display and control
 
-class OctopiGUI(QMainWindow):
+from control.typechecker import TypecheckClass, ClosedRange, ClosedSet, TypecheckFunction
 
-	# variables
-	fps_software_trigger = 100
+def format_seconds_nicely(sec:float)->str:
+    hours=int(sec//3600)
+    sec-=hours*3600
+    minutes=int(sec//60)
+    sec-=minutes*60
+    return f"{hours:3}h {minutes:2}m {sec:4.1f}s"
 
-	def __init__(self, is_simulation = False, *args, **kwargs):
-		super().__init__(*args, **kwargs)
+def flatten(l:list):
+    ret=[]
 
-		# load window
-		if ENABLE_TRACKING:
-			self.imageDisplayWindow = core.ImageDisplayWindow(draw_crosshairs=True)
-			self.imageDisplayWindow.show_ROI_selector()
-		else:
-			self.imageDisplayWindow = core.ImageDisplayWindow(draw_crosshairs=True)
-		self.imageArrayDisplayWindow = core.ImageArrayDisplayWindow() 
-		# self.imageDisplayWindow.show()
-		# self.imageArrayDisplayWindow.show()
+    for item in l:
+        if isinstance(item,list):
+            ret.extend(item)
+        else:
+            ret.append(item)
 
-		# image display windows
-		self.imageDisplayTabs = QTabWidget()
-		self.imageDisplayTabs.addTab(self.imageDisplayWindow.widget, "Live View")
-		self.imageDisplayTabs.addTab(self.imageArrayDisplayWindow.widget, "Multichannel Acquisition")
+    return ret
 
-		# load objects
-		if is_simulation:
-			self.camera = camera.Camera_Simulation(rotate_image_angle=ROTATE_IMAGE_ANGLE,flip_image=FLIP_IMAGE)
-			self.microcontroller = microcontroller.Microcontroller_Simulation()
-		else:
-			self.camera = camera.Camera(rotate_image_angle=ROTATE_IMAGE_ANGLE,flip_image=FLIP_IMAGE)
-			self.microcontroller = microcontroller.Microcontroller()
+assert [2,3,4,5]==flatten([2,[3,4],5])
 
-		# configure the actuators
-		self.microcontroller.configure_actuators()
-			
-		self.configurationManager = core.ConfigurationManager()
-		self.streamHandler = core.StreamHandler(display_resolution_scaling=DEFAULT_DISPLAY_CROP/100)
-		self.liveController = core.LiveController(self.camera,self.microcontroller,self.configurationManager)
-		self.navigationController = core.NavigationController(self.microcontroller)
-		self.autofocusController = core.AutoFocusController(self.camera,self.navigationController,self.liveController)
-		self.multipointController = core.MultiPointController(self.camera,self.navigationController,self.liveController,self.autofocusController,self.configurationManager)
-		if ENABLE_TRACKING:
-			self.trackingController = core.TrackingController(self.camera,self.microcontroller,self.navigationController,self.configurationManager,self.liveController,self.autofocusController,self.imageDisplayWindow)
-		self.imageSaver = core.ImageSaver(image_format=Acquisition.IMAGE_FORMAT)
-		self.imageDisplay = core.ImageDisplay()
+class ManagedObject:
+    def __init__(self):
+        self.value=None
+    def __eq__(self,other):
+        if self.value is None:
+            self.value=other
+            return other
+        else:
+            return self.value
 
-		# open the camera
-		# camera start streaming
-		self.camera.open()
-		# self.camera.set_reverse_x(CAMERA_REVERSE_X) # these are not implemented for the cameras in use
-		# self.camera.set_reverse_y(CAMERA_REVERSE_Y) # these are not implemented for the cameras in use
-		self.camera.set_software_triggered_acquisition() #self.camera.set_continuous_acquisition()
-		self.camera.set_callback(self.streamHandler.on_new_frame)
-		self.camera.enable_callback()
+class ObjectManager:
+    def __init__(self):
+        self.managed_objects={}
+    def __getattr__(self,key):
+        if key in self.managed_objects:
+            managed_object=self.managed_objects[key]
+        else:
+            managed_object=ManagedObject()
+            self.managed_objects[key]=managed_object
 
-		# load widgets
-		self.cameraSettingWidget = widgets.CameraSettingsWidget(self.camera,include_gain_exposure_time=False)
-		self.liveControlWidget = widgets.LiveControlWidget(self.streamHandler,self.liveController,self.configurationManager)
-		self.navigationWidget = widgets.NavigationWidget(self.navigationController)
-		self.dacControlWidget = widgets.DACControWidget(self.microcontroller)
-		self.autofocusWidget = widgets.AutoFocusWidget(self.autofocusController)
-		self.recordingControlWidget = widgets.RecordingWidget(self.streamHandler,self.imageSaver)
-		if ENABLE_TRACKING:
-			self.trackingControlWidget = widgets.TrackingControllerWidget(self.trackingController,self.configurationManager,show_configurations=TRACKING_SHOW_MICROSCOPE_CONFIGURATIONS)
-		self.multiPointWidget = widgets.MultiPointWidget(self.multipointController,self.configurationManager)
+        if managed_object.value is None:
+            return managed_object
+        else:
+            return managed_object.value
 
-		self.recordTabWidget = QTabWidget()
-		if ENABLE_TRACKING:
-			self.recordTabWidget.addTab(self.trackingControlWidget, "Tracking")
-		self.recordTabWidget.addTab(self.recordingControlWidget, "Simple Recording")
-		self.recordTabWidget.addTab(self.multiPointWidget, "Multipoint Acquisition")
+def as_widget(layout)->QWidget:
+    w=QWidget()
+    w.setLayout(layout)
+    return w
 
-		# layout widgets
-		layout = QVBoxLayout() #layout = QStackedLayout()
-		layout.addWidget(self.cameraSettingWidget)
-		layout.addWidget(self.liveControlWidget)
-		layout.addWidget(self.navigationWidget)
-		if SHOW_DAC_CONTROL:
-			layout.addWidget(self.dacControlWidget)
-		layout.addWidget(self.autofocusWidget)
-		layout.addWidget(self.recordTabWidget)
-		layout.addStretch()
-		
-		# transfer the layout to the central widget
-		self.centralWidget = QWidget()
-		self.centralWidget.setLayout(layout)
-		# self.centralWidget.setFixedSize(self.centralWidget.minimumSize())
-		# self.centralWidget.setFixedWidth(self.centralWidget.minimumWidth())
-		# self.centralWidget.setMaximumWidth(self.centralWidget.minimumWidth())
-		self.centralWidget.setFixedWidth(self.centralWidget.minimumSizeHint().width())
-		
-		if SINGLE_WINDOW:
-			dock_display = dock.Dock('Image Display', autoOrientation = False)
-			dock_display.showTitleBar()
-			dock_display.addWidget(self.imageDisplayTabs)
-			dock_display.setStretch(x=100,y=None)
-			dock_controlPanel = dock.Dock('Controls', autoOrientation = False)
-			# dock_controlPanel.showTitleBar()
-			dock_controlPanel.addWidget(self.centralWidget)
-			dock_controlPanel.setStretch(x=1,y=None)
-			dock_controlPanel.setFixedWidth(dock_controlPanel.minimumSizeHint().width())
-			main_dockArea = dock.DockArea()
-			main_dockArea.addDock(dock_display)
-			main_dockArea.addDock(dock_controlPanel,'right')
-			self.setCentralWidget(main_dockArea)
-			desktopWidget = QDesktopWidget()
-			height_min = 0.9*desktopWidget.height()
-			width_min = 0.96*desktopWidget.width()
-			self.setMinimumSize(width_min,height_min)
-		else:
-			self.setCentralWidget(self.centralWidget)
-			self.tabbedImageDisplayWindow = QMainWindow()
-			self.tabbedImageDisplayWindow.setCentralWidget(self.imageDisplayTabs)
-			self.tabbedImageDisplayWindow.setWindowFlags(self.windowFlags() | Qt.CustomizeWindowHint)
-			self.tabbedImageDisplayWindow.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
-			desktopWidget = QDesktopWidget()
-			width = 0.96*desktopWidget.height()
-			height = width
-			self.tabbedImageDisplayWindow.setFixedSize(width,height)
-			self.tabbedImageDisplayWindow.show()
+class HasLayout():
+    def __init__(self,
+        with_margins:bool=True,
+    ):
+        if not with_margins:
+            self.layout.setContentsMargins(0, 0, 0, 0)
+    
+class HasWidget():
+    def __init__(self,
+        enabled:Optional[bool]=None,
 
-		# make connections
-		self.streamHandler.signal_new_frame_received.connect(self.liveController.on_new_frame)
-		self.streamHandler.image_to_display.connect(self.imageDisplay.enqueue)
-		self.streamHandler.packet_image_to_write.connect(self.imageSaver.enqueue)
-		# self.streamHandler.packet_image_for_tracking.connect(self.trackingController.on_new_frame)
-		self.imageDisplay.image_to_display.connect(self.imageDisplayWindow.display_image) # may connect streamHandler directly to imageDisplayWindow
-		self.navigationController.xPos.connect(self.navigationWidget.label_Xpos.setNum)
-		self.navigationController.yPos.connect(self.navigationWidget.label_Ypos.setNum)
-		self.navigationController.zPos.connect(self.navigationWidget.label_Zpos.setNum)
-		if ENABLE_TRACKING:
-			self.navigationController.signal_joystick_button_pressed.connect(self.trackingControlWidget.slot_joystick_button_pressed)
-		else:
-			self.navigationController.signal_joystick_button_pressed.connect(self.autofocusController.autofocus)
-		self.autofocusController.image_to_display.connect(self.imageDisplayWindow.display_image)
-		self.multipointController.image_to_display.connect(self.imageDisplayWindow.display_image)
-		self.multipointController.signal_current_configuration.connect(self.liveControlWidget.set_microscope_mode)
-		self.multipointController.image_to_display_multi.connect(self.imageArrayDisplayWindow.display_image)
-		self.liveControlWidget.signal_newExposureTime.connect(self.cameraSettingWidget.set_exposure_time)
-		self.liveControlWidget.signal_newAnalogGain.connect(self.cameraSettingWidget.set_analog_gain)
-		self.liveControlWidget.update_camera_settings()
+        **kwargs,
+    ):
+        if not enabled is None:
+            self.widget.setEnabled(enabled)
 
-	def closeEvent(self, event):
-		event.accept()
-		# self.softwareTriggerGenerator.stop() @@@ => 
-		self.navigationController.home()
-		self.liveController.stop_live()
-		self.camera.close()
-		self.imageSaver.close()
-		self.imageDisplay.close()
-		if not SINGLE_WINDOW:
-			self.imageDisplayWindow.close()
-			self.imageArrayDisplayWindow.close()
-			self.tabbedImageDisplayWindow.close()
-		self.microcontroller.close()
+        super().__init__(**kwargs)
+        
+class HasFramestyle(HasWidget):
+    def __init__(self,
+        frame_style:ClosedSet[Optional[str]](None,"raised","sunken")=None,
+
+        **kwargs,
+    ):
+        if not frame_style is None:
+            if frame_style=="raised":
+                self.widget.setFrameStyle(QFrame.Panel | QFrame.Raised)
+            elif frame_style=="sunken":
+                self.widget.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+
+        super().__init__(**kwargs)
+
+class HasToolTip(HasWidget):
+    def __init__(self,
+        tooltip:Optional[str]=None,
+
+        **kwargs,
+    ):
+        if not tooltip is None:
+            self.widget.setToolTip(tooltip)
+
+        super().__init__(**kwargs)
+
+class HasCallbacks(HasWidget):
+    def __init__(self,**kwargs):
+        unused_kwargs={}
+        for key,value in kwargs.items():
+            if key.startswith("on_"):
+                signal_name=key[3:]
+                assert len(signal_name)>0
+
+                try:
+                    if isinstance(value,list):
+                        for callback in value:
+                            getattr(self.widget,signal_name).connect(callback)
+                    else:
+                        getattr(self.widget,signal_name).connect(value)
+
+                    # continue only if setting callback was successfull
+                    continue
+                except:
+                    pass
+            
+            # if setting callback was unsuccessfull (for whatever reason), forward argument to other constructors
+            unused_kwargs[key]=value
+
+        try:
+            super().__init__(**unused_kwargs)
+        except TypeError as te:
+            if str(te)!="object.__init__() takes exactly one argument (the instance to initialize)":
+                raise te
+            else:
+                unused_arg_list=", ".join(unused_kwargs.keys())
+                print(f"one of these arguments was unused: {unused_arg_list}")
+
+class TextSelectable(HasWidget):
+    def __init__(self,
+        text_selectable:Optional[bool]=None,
+
+        **kwargs,
+    ):
+        if not text_selectable is None:
+            self.widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        super().__init__(**kwargs)
+
+
+def try_add_member(adder,addee,*args,**kwargs):
+    if isinstance(addee,HasLayout):
+        try_add_member(adder,addee.layout,*args,**kwargs)
+    elif isinstance(addee,HasWidget):
+        try_add_member(adder,addee.widget,*args,**kwargs)
+    else:
+        try:
+            adder.addLayout(addee,*args,**kwargs)
+        except TypeError:
+            adder.addWidget(addee,*args,**kwargs)
+
+class GridItem(HasWidget):
+    def __init__(self,
+        widget:Optional[Any],
+
+        row:Optional[int]=None,
+        column:Optional[int]=None,
+        rowSpan:Optional[int]=None,
+        colSpan:Optional[int]=None,
+    ):
+        self.widget=widget
+
+        self.row=row
+        self.column=column
+        self.rowSpan=rowSpan
+        self.colSpan=colSpan
+
+class Grid(HasLayout,HasWidget):
+    def __init__(self,*args,**kwargs):
+        self.layout=QGridLayout()
+        row_offset=0
+        for outer_index,outer_arg in enumerate(args):
+            if isinstance(outer_arg,GridItem):
+                if not outer_arg.widget is None:
+                    try_add_member(self.layout, outer_arg.widget,
+                        outer_arg.row if not outer_arg.row is None else outer_index,
+                        outer_arg.column or 0,
+                        outer_arg.rowSpan or 1,
+                        outer_arg.colSpan or 1
+                    )
+                continue
+
+            try:
+                _discard=outer_arg.__iter__
+                can_be_iterated_over=True
+            except:
+                can_be_iterated_over=False
+
+            if can_be_iterated_over:
+                col_offset=0
+                for inner_index,inner_arg in enumerate(outer_arg):
+                    if not inner_arg is None: # inner args can be NONE to allow for some easy padding between elements (GridItem(widget=None) achieves the same, though allows for variable padding with e.g. colSpan=2)
+                        if isinstance(inner_arg,GridItem):
+                            row = ( inner_arg.row if not inner_arg.row is None else outer_index ) + row_offset
+                            col = ( inner_arg.column if not inner_arg.column is None else inner_index ) + col_offset
+                            height = inner_arg.rowSpan or 1
+                            width = inner_arg.colSpan or 1
+
+                            if not inner_arg.widget is None:
+                                try_add_member(self.layout, inner_arg.widget, row, col, height, width)
+
+                            if width != 1:
+                                col_offset+=width-1
+
+                            continue
+
+                        try_add_member(self.layout, inner_arg, outer_index + row_offset, inner_index + col_offset)
+            else:
+                try_add_member(self.layout, outer_arg, outer_index+row_offset, 0)
+
+        super().__init__(**kwargs)
+
+    @property
+    def widget(self):
+        return as_widget(self.layout)
+
+class HBox(HasLayout,HasWidget):
+    def __init__(self,*args,**kwargs):
+        self.layout=QHBoxLayout()
+        for arg in args:
+            try_add_member(self.layout,arg)
+
+        super().__init__(**kwargs)
+
+    @property
+    def widget(self):
+        return as_widget(self.layout)
+
+class VBox(HasLayout,HasWidget):
+    def __init__(self,*args,**kwargs):
+        self.layout=QVBoxLayout()
+        for arg in args:
+            try_add_member(self.layout,arg)
+    
+        super().__init__(**kwargs)
+
+    @property
+    def widget(self):
+        return as_widget(self.layout)
+
+class SpinBoxDouble(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        minimum:Optional[float]=None,
+        maximum:Optional[float]=None,
+        default:Optional[float]=None,
+        step:Optional[float]=None,
+        num_decimals=None,
+        keyboard_tracking=None,
+        
+        **kwargs,
+    ):
+        self.widget=QDoubleSpinBox()
+
+        if not minimum is None:
+            self.widget.setMinimum(minimum) 
+        if not maximum is None:
+            self.widget.setMaximum(maximum)
+        if not step is None:
+            self.widget.setSingleStep(step)
+        if not default is None:
+            self.widget.setValue(default)
+        if not num_decimals is None:
+            self.widget.setDecimals(num_decimals)
+        if not keyboard_tracking is None:
+            self.widget.setKeyboardTracking(keyboard_tracking)
+
+        super().__init__(**kwargs)
+
+class SpinBoxInteger(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        minimum:Optional[int]=None,
+        maximum:Optional[int]=None,
+        default:Optional[int]=None,
+        step:Optional[int]=None,
+        num_decimals=None,
+        keyboard_tracking=None,
+
+        **kwargs,
+    ):
+        self.widget=QSpinBox()
+
+        if not minimum is None:
+            self.widget.setMinimum(minimum) 
+        if not maximum is None:
+            self.widget.setMaximum(maximum)
+        if not step is None:
+            self.widget.setSingleStep(step)
+        if not default is None:
+            self.widget.setValue(default)
+        if not num_decimals is None:
+            self.widget.setDecimals(num_decimals)
+        if not keyboard_tracking is None:
+            self.widget.setKeyboardTracking(keyboard_tracking)
+
+        super().__init__(**kwargs)
+
+class Label(HasFramestyle,TextSelectable,HasToolTip,HasWidget):
+    def __init__(self,
+        text:str,
+        text_color:Optional[str]=None,
+        background_color:Optional[str]=None,
+
+        **kwargs,
+    ):
+        self.widget=QLabel(text)
+        
+        stylesheet=""
+        if not text_color is None:
+            stylesheet+=f"color : {text_color} ; "
+        if not background_color is None:
+            stylesheet+=f"background-color : {background_color} ; "
+        if len(stylesheet)>0:
+            final_stylesheet=f"QLabel {{ { stylesheet } }}"
+            self.widget.setStyleSheet(final_stylesheet)
+
+        super().__init__(**kwargs)
+
+
+class Button(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        text:str,
+        default:Optional[bool]=None,
+        checkable:Optional[bool]=None,
+        checked:Optional[bool]=None,
+
+        **kwargs,
+    ):
+        self.widget=QPushButton(text)
+
+        if not default is None:
+            self.widget.setDefault(default)
+        if not checkable is None:
+            self.widget.setCheckable(checkable)
+        if not checked is None:
+            self.widget.setChecked(checked)
+
+        super().__init__(**kwargs)            
+
+class ItemList(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        items:List[Any],
+
+        **kwargs,
+    ):
+        self.widget=QListWidget()
+        self.widget.addItems(items)
+
+        super().__init__(**kwargs)
+
+class Dropdown(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        items:List[Any],
+        current_index:int,
+
+        **kwargs,
+    ):
+        self.widget=QComboBox()
+        self.widget.addItems(items)
+        self.widget.setCurrentIndex(current_index)
+
+        super().__init__(**kwargs)
+                    
+class Checkbox(HasCallbacks,HasToolTip,HasWidget):
+    def __init__(self,
+        label:str,
+
+        checked:Optional[bool]=None,
+        
+        **kwargs,
+    ):
+        self.widget=QCheckBox(label)
+
+        if not checked is None:
+            self.widget.setChecked(checked)
+
+        super().__init__(**kwargs)
+
+# special widgets
+
+class Tab(HasWidget):
+    def __init__(self,widget,title:Optional[str]=None):
+        if isinstance(widget,QWidget):
+            self.widget=widget
+        elif isinstance(widget,HasWidget):
+            self.widget=widget.widget
+        else:
+            assert False, "widget is not a QWidget"
+        self.title=title
+
+class TabBar(HasWidget):
+    def __init__(self,*args):
+        self.widget=QTabWidget()
+        for tab in args:
+            if isinstance(tab,Tab):
+                self.widget.addTab(tab.widget,tab.title)
+            else:
+                assert isinstance(tab,QWidget)
+                self.widget.addTab(tab)
+
+
+class Dock(HasWidget):
+    def __init__(self,widget:QWidget,title:str,minimize_height:bool=False,fixed_width:Optional[Any]=None,stretch_x:Optional[int]=100,stretch_y:Optional[int]=100):
+        self.widget = dock.Dock(title, autoOrientation = False)
+        self.widget.showTitleBar()
+        self.widget.addWidget(widget)
+        self.widget.setStretch(x=stretch_x,y=stretch_y)
+
+        if not fixed_width is None:
+            self.widget.setFixedWidth(fixed_width)
+
+        if minimize_height:
+            self.widget.setFixedHeight(self.widget.minimumSizeHint().height())
+
+class DockArea(HasWidget):
+    def __init__(self,minimize_height:bool=False,*args):
+        self.widget=dock.DockArea()
+        for dock in args:
+            self.widget.addDock(dock)
+
+        if minimize_height:
+            self.widget.setFixedHeight(self.widget.minimumSizeHint().height())
+
+# more like windows rather than widgets
+
+FILTER_JSON="JSON (*.json)"
+
+class FileDialog:
+    @TypecheckFunction
+    def __init__(self,
+        mode:ClosedSet[str]('save','open','open_dir'),
+
+        directory:Optional[str]=None,
+        caption:Optional[str]=None,
+        filter_type:Optional[str]=None,
+    ):
+        self.window=QFileDialog(options=QFileDialog.DontUseNativeDialog)
+        self.window.setWindowModality(Qt.ApplicationModal)
+        self.mode=mode
+
+        self.kwargs={}#'options':QFileDialog.DontUseNativeDialog}
+        if not directory is None:
+            self.kwargs['directory']=directory
+        if not caption is None:
+            self.kwargs['caption']=caption
+        if not filter_type is None:
+            self.kwargs['filter']=filter_type
+            
+
+    def run(self):
+        if self.mode=='save':
+            return self.window.getSaveFileName(**self.kwargs)[0]
+        elif self.mode=='open':
+            return self.window.getOpenFileName(**self.kwargs)[0]
+        elif self.mode=='open_dir':
+            return self.window.getExistingDirectory(**self.kwargs)
+        else:
+            assert False
+
+class MessageBox:
+    @TypecheckFunction
+    def __init__(self,
+        title:str,
+        mode:ClosedSet[str]('information','critical','warning','question'),
+
+        text:Optional[str]=None,
+        button_override:Optional[QMessageBox.StandardButtons]=None
+    ):
+        self.title=title
+        self.mode=mode
+        self.text=text
+
+        self.button_override=button_override
+
+    @TypecheckFunction
+    def run(self)->Optional[QMessageBox.StandardButton]:
+        if self.mode=='information':
+            if not self.button_override is None:
+                return QMessageBox.information(None,self.title,self.text,self.button_override)
+            else:
+                return QMessageBox.information(None,self.title,self.text)
+        elif self.mode=='critical':
+            assert not self.button_override
+            return QMessageBox.critical(None,self.title,self.text)
+        elif self.mode=='warning':
+            assert not self.button_override
+            return QMessageBox.warning(None,self.title,self.text)
+        elif self.mode=='question':
+            assert not self.button_override
+            question_answer:ClosedSet[int](QMessageBox.Yes,QMessageBox.No)=QMessageBox.question(None,self.title,self.text)
+            return question_answer
+        else:
+            assert False, "unreachable (invalid messsagebox mode)"
+
+class BlankWidget(QWidget):
+    def __init__(self,
+        height:Optional[int]=None,
+        width:Optional[int]=None,
+        offset_left:Optional[int]=None,
+        offset_top:Optional[int]=None,
+
+        background_color:Optional[str]=None,
+        background_image_path:Optional[str]=None,
+
+        children:list=[],
+
+        tooltip:Optional[str]=None,
+
+        **kwargs,
+    ):
+        QWidget.__init__(self)
+
+        self.background_color=background_color
+        self.background_image_path=background_image_path
+
+        self.generate_stylesheet()
+
+        if not height is None and width is not None:
+            self.resize(width,height)
+        elif int(height is None) + int(width is None) == 1:
+            assert False,"height and width must either both or neither be none"
+        
+        if not offset_left is None:
+            self.move(offset_left,offset_top)
+        elif int(offset_left is None) + int(offset_top is None) == 1:
+            assert False,"height and width must either both or neither be none"
+
+        self.children=[]
+        self.set_children(children)
+
+        event_handlers={}
+        for key,value in kwargs.items():
+            assert key[:3]=='on_'
+
+            event_name=key[3:]
+            event_handlers[event_name]=value
+
+            if not event_name in {
+                'mouseDoubleClickEvent',
+                'mouseMoveEvent',
+                'mousePressEvent',
+                'mouseReleaseEvent',
+            }:
+                raise ValueError(f"event type '{event_name}' unknown")
+
+        self.event_handlers=event_handlers
+
+    def generate_stylesheet(self):
+        stylesheet=""
+        stylesheet+=f"background-color: {self.background_color or 'none'} ; "
+        if not self.background_image_path is None:
+            stylesheet+=f"border-image: url({self.background_image_path}) ; "
+        else:
+            stylesheet+=f"border-image: none ; "
+        self.setStyleSheet(f" {stylesheet} ")
+
+    def set_children(self,new_children):
+        # orphan old children
+        old_children=self.children
+        for old_child in old_children:
+            old_child.setParent(None)
+            old_child.show()
+
+        # adopt new ones
+        for child in new_children:
+            child.setParent(self)
+            child.show()
+
+        # replace orphans
+        self.children=new_children
+        self.show()
+
+    # this needs to be done for custom QWidgets for some reason (from https://forum.qt.io/topic/100691/custom-qwidget-setstylesheet-not-working-python/2)
+    def paintEvent(self, pe):
+        o = QStyleOption()
+        o.initFrom(self)
+        p = QPainter(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, o, p, self)
+
+    def mouseDoubleClickEvent(self,event_data):
+        if 'mouseDoubleClickEvent' in self.event_handlers:
+            event_handlers=self.event_handlers['mouseDoubleClickEvent']
+            if isinstance(event_handlers,list):
+                for callback in event_handlers:
+                    callback(event_data)
+            else:
+                event_handlers(event_data)
+    def mouseMoveEvent(self,event_data):
+        if 'mouseMoveEvent' in self.event_handlers:
+            event_handlers=self.event_handlers['mouseMoveEvent']
+            if isinstance(event_handlers,list):
+                for callback in event_handlers:
+                    callback(event_data)
+            else:
+                event_handlers(event_data)
+    def mousePressEvent(self,event_data):
+        if 'mousePressEvent' in self.event_handlers:
+            event_handlers=self.event_handlers['mousePressEvent']
+            if isinstance(event_handlers,list):
+                for callback in event_handlers:
+                    callback(event_data)
+            else:
+                event_handlers(event_data)
+    def mouseReleaseEvent(self,event_data):
+        if 'mouseReleaseEvent' in self.event_handlers:
+            event_handlers=self.event_handlers['mouseReleaseEvent']
+            if isinstance(event_handlers,list):
+                for callback in event_handlers:
+                    callback(event_data)
+            else:
+                event_handlers(event_data)

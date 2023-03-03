@@ -7,7 +7,9 @@ sudo apt-get update
 sudo apt-get install python3-pip
 sudo apt-get install python3-pyqtgraph
 sudo apt-get install python3-pyqt5
-pip3 install qtpy pyserial pandas
+sudo apt-get install git
+git clone https://github.com/hongquanli/octopi-research.git
+pip3 install qtpy pyserial pandas imageio crc
 ```
 If opencv and lxml not preinstalled (e.g. if you're not using a Jetson but a regular computer), run the following
 ```
@@ -52,8 +54,6 @@ The following aspects are specified in the configuration file:
 - stage motor and lead screw specs (in particular screw pitch, e.g. `SCREW_PITCH_X_MM`)
 - whether encoders are used and encoder-related settings (e.g. `USE_ENCODER_X`)
 - whether homing is enabled for a particular axis (e.g. `HOMING_ENABLED_X`)
-- whether tracking is enabled (`ENABLE_TRACKING`)
-- plate reader related definations (`class PLATE_READER`)
 
 ## Using the software
 Use one of the following to start the program
@@ -61,8 +61,4 @@ Use one of the following to start the program
 python3 main.py
 python3 main_camera_only.py
 python3 main_motion_only.py
-```
-To start the program when no hardware is connected, use
-```
-python3 main_simulation.py
 ```
