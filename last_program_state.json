@@ -1,0 +1,133 @@
+{
+  "output_path": "._2023-09-06_22.18.22",
+  "project_name": "",
+  "plate_name": "",
+  "image_file_format": "TIFF",
+  "trigger_mode": "Software",
+  "pixel_format": "Mono12",
+  "plate_type": "Generic 12",
+  "timestamp": "2023-09-06 22:18:22",
+  "objective": "<unspecified>",
+  "af_software_channel": null,
+  "af_laser_on": false,
+  "af_laser_reference": null,
+  "grid_config": {
+    "x": {
+      "d": 0.9,
+      "N": 1,
+      "unit": "mm"
+    },
+    "y": {
+      "d": 0.9,
+      "N": 1,
+      "unit": "mm"
+    },
+    "z": {
+      "d": 0.0001,
+      "N": 1,
+      "unit": "mm"
+    },
+    "t": {
+      "d": 1.0,
+      "N": 1,
+      "unit": "s"
+    },
+    "mask": [
+      [
+        true
+      ]
+    ]
+  },
+  "channels_ordered": [
+    "Fluorescence 730 nm Ex"
+  ],
+  "channels_config": [
+    {
+      "ID": 5,
+      "Name": "Fluorescence 405 nm Ex",
+      "IlluminationSource": 11,
+      "ExposureTime": 20.0,
+      "AnalogGain": 3.7000000000000006,
+      "IlluminationIntensity": 100.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    },
+    {
+      "ID": 12,
+      "Name": "Fluorescence 730 nm Ex",
+      "IlluminationSource": 15,
+      "ExposureTime": 968.0,
+      "AnalogGain": 15.0,
+      "IlluminationIntensity": 100.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": -4.0
+    },
+    {
+      "ID": 7,
+      "Name": "Fluorescence 638 nm Ex",
+      "IlluminationSource": 13,
+      "ExposureTime": 80.0,
+      "AnalogGain": 0.0,
+      "IlluminationIntensity": 100.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": -4.0
+    },
+    {
+      "ID": 8,
+      "Name": "Fluorescence 561 nm Ex",
+      "IlluminationSource": 14,
+      "ExposureTime": 200.0,
+      "AnalogGain": 5.0,
+      "IlluminationIntensity": 100.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    },
+    {
+      "ID": 6,
+      "Name": "Fluorescence 488 nm Ex",
+      "IlluminationSource": 12,
+      "ExposureTime": 20.0,
+      "AnalogGain": 2.0,
+      "IlluminationIntensity": 100.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    },
+    {
+      "ID": 1,
+      "Name": "BF LED matrix full",
+      "IlluminationSource": 0,
+      "ExposureTime": 200.0,
+      "AnalogGain": 0.0,
+      "IlluminationIntensity": 5.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    },
+    {
+      "ID": 2,
+      "Name": "BF LED matrix left half",
+      "IlluminationSource": 1,
+      "ExposureTime": 195.0,
+      "AnalogGain": 0.0,
+      "IlluminationIntensity": 5.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    },
+    {
+      "ID": 3,
+      "Name": "BF LED matrix right half",
+      "IlluminationSource": 2,
+      "ExposureTime": 194.0,
+      "AnalogGain": 0.0,
+      "IlluminationIntensity": 5.0,
+      "CameraSN": "",
+      "RelativeZOffsetUM": 0.0
+    }
+  ],
+  "well_list": [
+    "A01",
+    "A02",
+    "B02",
+    "B01",
+    "C01"
+  ]
+}
