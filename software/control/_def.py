@@ -117,6 +117,8 @@ class CMD_SET:
     SET_ILLUMINATION_LED_MATRIX = 13
     ACK_JOYSTICK_BUTTON_PRESSED = 14
     ANALOG_WRITE_ONBOARD_DAC = 15
+    SET_DAC80508_REFDIV_GAIN = 16
+    SET_ILLUMINATION_INTENSITY_FACTOR = 17
     MOVETO_X = 6
     MOVETO_Y = 7
     MOVETO_Z = 8
@@ -281,6 +283,26 @@ MAX_ACCELERATION_X_mm = 500
 MAX_ACCELERATION_Y_mm = 500
 MAX_ACCELERATION_Z_mm = 20
 
+# config encoder arguments
+HAS_ENCODER_X = False
+HAS_ENCODER_Y = False
+HAS_ENCODER_Z = False
+
+# enable PID control
+ENABLE_PID_X  = False
+ENABLE_PID_Y  = False
+ENABLE_PID_Z  = False
+
+# flip direction True or False
+ENCODER_FLIP_DIR_X = True
+ENCODER_FLIP_DIR_Y = True
+ENCODER_FLIP_DIR_Z = True
+
+# distance for each count (um)
+ENCODER_RESOLUTION_UM_X = 0.05
+ENCODER_RESOLUTION_UM_Y = 0.05
+ENCODER_RESOLUTION_UM_Z = 0.1
+
 # end of actuator specific configurations
 
 SCAN_STABILIZATION_TIME_MS_X = 160
@@ -350,6 +372,17 @@ class SLIDE_POSITION:
     LOADING_Y_MM = 55
     SCANNING_X_MM = 3
     SCANNING_Y_MM = 3
+
+class OUTPUT_GAINS:
+    REFDIV = False
+    CHANNEL0_GAIN = False
+    CHANNEL1_GAIN = False
+    CHANNEL2_GAIN = False
+    CHANNEL3_GAIN = False
+    CHANNEL4_GAIN = False
+    CHANNEL5_GAIN = False
+    CHANNEL6_GAIN = False
+    CHANNEL7_GAIN = True
 
 SLIDE_POTISION_SWITCHING_TIMEOUT_LIMIT_S = 10
 SLIDE_POTISION_SWITCHING_HOME_EVERYTIME = False
@@ -452,11 +485,13 @@ ENABLE_SPINNING_DISK_CONFOCAL=False
 
 INVERTED_OBJECTIVE = False
 
+ILLUMINATION_INTENSITY_FACTOR = 0.6
+
 CAMERA_TYPE="Default"
 
 FOCUS_CAMERA_TYPE="Default"
 
-INVERTED_OBJECTIVE = False
+LASER_AF_CHARACTERIZATION_MODE=False
 
 ##########################################################
 #### start of loading machine specific configurations ####

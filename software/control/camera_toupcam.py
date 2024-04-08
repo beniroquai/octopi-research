@@ -61,7 +61,7 @@ class Camera(object):
                 raw_image = np.frombuffer(self.buf, dtype='uint8')
             elif self.pixel_size_byte == 2:
                 raw_image = np.frombuffer(self.buf, dtype='uint16')
-            self.current_frame = raw_image.reshape(self.height,self.width)
+            self.current_frame = raw_image.reshape(self.Height,self.Width)
 
         # for debugging
         #print(self.current_frame.shape)
@@ -81,7 +81,7 @@ class Camera(object):
     def _TDIBWIDTHBYTES(w):
         return (w * 24 + 31) // 32 * 4
 
-    def __init__(self,sn=None,resolution=None,is_global_shutter=False,rotate_image_angle=None,flip_image=None):
+    def __init__(self,sn=None,resolution=(3104,2084),is_global_shutter=False,rotate_image_angle=None,flip_image=None):
 
         # many to be purged
         self.sn = sn
@@ -110,8 +110,8 @@ class Camera(object):
         self.callback_is_enabled = False
         self.is_streaming = False
 
-        self.GAIN_MAX = 100
-        self.GAIN_MIN = 1
+        self.GAIN_MAX = 40
+        self.GAIN_MIN = 0
         self.GAIN_STEP = 1
         self.EXPOSURE_TIME_MS_MIN = 0.01
         self.EXPOSURE_TIME_MS_MAX = 3600000
@@ -212,15 +212,15 @@ class Camera(object):
             self.set_data_format('RAW')
             self.set_pixel_format('MONO16') # 'MONO8'
             self.set_auto_exposure(False)
+
+            # set resolution to full if resolution is not specified or not in the list of supported resolutions
             if self.resolution is None:
                 self.resolution = highest_res
             elif self.resolution not in self.res_list:
                 self.resolution = highest_res
-            if self.resolution is not None:
-                self.set_resolution(self.resolution[0],self.resolution[1]) # buffer created when setting resolution
-            else:
-                # self.set_resolution(0) # buffer created when setting resolution, # use the max resolution # to create the function with one input
-                pass
+
+            # set camera resolution
+            self.set_resolution(self.resolution[0],self.resolution[1]) # buffer created when setting resolution
             self._update_buffer_settings()
             
             if self.camera:
@@ -294,11 +294,12 @@ class Camera(object):
         #     self.camera.ExposureTime.set(camera_exposure_time)
 
     def set_analog_gain(self,analog_gain):
-        gain_min, gain_max, gain_default = self.camera.get_ExpoAGainRange()
-        analog_gain = min(gain_max, analog_gain*100)
-        analog_gain = max(gain_min, analog_gain*100)
-        self.analog_gain = analog_gain/100.0
-        self.camera.put_ExpoAGain(int(analog_gain))
+        analog_gain = min(self.GAIN_MAX,analog_gain)
+        analog_gain = max(self.GAIN_MIN,analog_gain)
+        self.analog_gain = analog_gain
+        # gain_min, gain_max, gain_default = self.camera.get_ExpoAGainRange() # remove from set_analog_gain
+        # for touptek cameras gain is 100-10000 (for 1x - 100x)
+        self.camera.put_ExpoAGain(int(100*(10**(analog_gain/20))))
         # self.camera.Gain.set(analog_gain)
 
     def get_awb_ratios(self):
@@ -396,7 +397,7 @@ class Camera(object):
                 self.camera.put_Option(toupcam.TOUPCAM_OPTION_BITDEPTH,1)
                 self.camera.put_Option(toupcam.TOUPCAM_OPTION_RGB,1)
 
-        self._update_buffer_settings(self.Width, self.Height)
+        self._update_buffer_settings()
 
         if was_streaming:
             self.start_streaming()
@@ -439,41 +440,27 @@ class Camera(object):
             self.stop_streaming()
             was_streaming = True
         try:
-            old_w, old_h = self.camera.get_Size()
             self.camera.put_Size(width,height)
-            self.HeightMax = height
-            self.WidthMax = width
-            resize_ratio_x = width/old_w
-            resize_ratio_y = height/old_h
-            new_width = int(self.Width*resize_ratio_x)
-            new_offset_x = int(self.OffsetX*resize_ratio_x)
-            new_height = int(self.Height*resize_ratio_y)
-            new_offset_y = int(self.OffsetY*resize_ratio_y)
-            self.Width, self.Height = self.camera.get_Size()
-            self.ROI_width = self.Width
-            self.ROI_height = self.Height
-            self.ROI_offset_x = 0
-            self.ROI_offset_y = 0
-            self.set_ROI(new_offset_x, new_offset_y, new_width, new_height)
         except toupcam.HRESULTException as ex:
             err_type = hresult_checker(ex,'E_INVALIDARG','E_BUSY','E_ACCESDENIED', 'E_UNEXPECTED')
             if err_type == 'E_INVALIDARG':
                 print(f"Resolution ({width},{height}) not supported by camera")
             else:
                 print(f"Resolution cannot be set due to error: "+err_type)
-        self._update_buffer_settings(self.Width, self.Height)
+        self._update_buffer_settings()
         if was_streaming:
             self.start_streaming()
 
-    def _update_buffer_settings(self, width=None, height=None):
+    def _update_buffer_settings(self):
         # resize the buffer
-        if width is None or height is None:
-            width, height = self.camera.get_Size()
-        self.width = width
-        self.height = height
+        width, height = self.camera.get_Size()
+
+        self.Width = width
+        self.Height = height
+
         # calculate buffer size
         if (self.data_format == 'RGB') & (self.pixel_size_byte != 4):
-            bufsize = _TDIBWIDTHBYTES(self.width * self.pixel_size_byte * 8) * height
+            bufsize = _TDIBWIDTHBYTES(width * self.pixel_size_byte * 8) * height
         else:
             bufsize = width * self.pixel_size_byte * height
         print('image size: {} x {}, bufsize = {}'.format(width, height, bufsize))
@@ -519,6 +506,14 @@ class Camera(object):
         self.camera.put_Option(toupcam.TOUPCAM_OPTION_TRIGGER,2)
         self.frame_ID_offset_hardware_trigger = None
         self.trigger_mode = TriggerMode.HARDWARE
+
+        # select trigger source to GPIO0
+        try:
+            self.camera.IoControl(1, toupcam.TOUPCAM_IOCONTROLTYPE_SET_TRIGGERSOURCE, 1)
+        except toupcam.HRESULTException as ex:
+            error_type = hresult_checker(ex)
+            print("Unable to select trigger source: " + error_type)
+
         # self.update_camera_exposure_time()
 
     def set_gain_mode(self,mode):
@@ -677,7 +672,7 @@ class Camera(object):
             except toupcam.HRESULTException as ex:
                 err_type = hresult_checker(ex,'E_INVALIDARG')
                 print("ROI bounds invalid, not changing ROI.")
-            self._update_buffer_settings(self.Width, self.Height)
+            self._update_buffer_settings()
         if was_streaming:
             self.start_streaming()
 
@@ -737,8 +732,8 @@ class Camera_Simulation(object):
         self.callback_is_enabled = False
         self.is_streaming = False
 
-        self.GAIN_MAX = 300
-        self.GAIN_MIN = 100
+        self.GAIN_MAX = 40
+        self.GAIN_MIN = 0
         self.GAIN_STEP = 1
         self.EXPOSURE_TIME_MS_MIN = 0.01
         self.EXPOSURE_TIME_MS_MAX = 3600000

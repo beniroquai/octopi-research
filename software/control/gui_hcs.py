@@ -1,5 +1,6 @@
 # set QT_API environment variable
 import os 
+import time
 os.environ["QT_API"] = "pyqt5"
 import qtpy
 
@@ -12,6 +13,7 @@ from control._def import *
 
 # app specific libraries
 import control.widgets as widgets
+
 
 if CAMERA_TYPE == "Toupcam":
     try:
@@ -121,9 +123,11 @@ class OctopiGUI(QMainWindow):
 
         # reset the MCU
         self.microcontroller.reset()
+        time.sleep(0.5)
 
         # reinitialize motor drivers and DAC (in particular for V2.1 driver board where PG is not functional)
         self.microcontroller.initialize_drivers()
+        time.sleep(0.5)
 
         # configure the actuators
         self.microcontroller.configure_actuators()
@@ -220,6 +224,21 @@ class OctopiGUI(QMainWindow):
                 print('z homing timeout, the program will exit')
                 exit()
         print('objective retracted')
+
+        # set encoder arguments
+        # set axis pid control enable
+        # only ENABLE_PID_X and HAS_ENCODER_X are both enable, can be enable to PID
+        if HAS_ENCODER_X == True:
+            self.navigationController.configure_encoder(0, (SCREW_PITCH_X_MM * 1000) / ENCODER_RESOLUTION_UM_X, ENCODER_FLIP_DIR_X)
+            self.navigationController.set_pid_control_enable(0, ENABLE_PID_X)
+        if HAS_ENCODER_Y == True:
+            self.navigationController.configure_encoder(1, (SCREW_PITCH_Y_MM * 1000) / ENCODER_RESOLUTION_UM_Y, ENCODER_FLIP_DIR_Y)
+            self.navigationController.set_pid_control_enable(1, ENABLE_PID_Y)
+        if HAS_ENCODER_Z == True:
+            self.navigationController.configure_encoder(2, (SCREW_PITCH_Z_MM * 1000) / ENCODER_RESOLUTION_UM_Z, ENCODER_FLIP_DIR_Z)
+            self.navigationController.set_pid_control_enable(2, ENABLE_PID_Z)
+        time.sleep(0.5)
+
         self.navigationController.set_z_limit_pos_mm(SOFTWARE_POS_LIMIT.Z_POSITIVE)
 
         # home XY, set zero and set software limit
@@ -266,7 +285,23 @@ class OctopiGUI(QMainWindow):
             if time.time() - t0 > 5:
                 print('z return timeout, the program will exit')
                 exit()
-        
+
+        # set output's gains
+        div = 1 if OUTPUT_GAINS.REFDIV is True else 0
+        gains  = OUTPUT_GAINS.CHANNEL0_GAIN << 0 
+        gains += OUTPUT_GAINS.CHANNEL1_GAIN << 1 
+        gains += OUTPUT_GAINS.CHANNEL2_GAIN << 2 
+        gains += OUTPUT_GAINS.CHANNEL3_GAIN << 3 
+        gains += OUTPUT_GAINS.CHANNEL4_GAIN << 4 
+        gains += OUTPUT_GAINS.CHANNEL5_GAIN << 5 
+        gains += OUTPUT_GAINS.CHANNEL6_GAIN << 6 
+        gains += OUTPUT_GAINS.CHANNEL7_GAIN << 7 
+        self.microcontroller.configure_dac80508_refdiv_and_gain(div, gains)
+
+        # set illumination intensity factor
+        global ILLUMINATION_INTENSITY_FACTOR
+        self.microcontroller.set_dac80508_scaling_factor_for_illumination(ILLUMINATION_INTENSITY_FACTOR)
+
         # open the camera
         # camera start streaming
         # self.camera.set_reverse_x(CAMERA_REVERSE_X) # these are not implemented for the cameras in use
@@ -510,6 +545,8 @@ class OctopiGUI(QMainWindow):
         while self.microcontroller.is_busy():
             time.sleep(0.005)
 
+        self.navigationController.turnoff_axis_pid_control()
+
         self.liveController.stop_live()
         self.camera.close()
         self.imageSaver.close()
@@ -519,6 +556,7 @@ class OctopiGUI(QMainWindow):
             self.imageArrayDisplayWindow.close()
             self.tabbedImageDisplayWindow.close()
         if SUPPORT_LASER_AUTOFOCUS:
+            self.liveController_focus_camera.stop_live()
             self.camera_focus.close()
             self.imageDisplayWindow_focus.close()
         self.microcontroller.close()
