@@ -434,7 +434,7 @@ void tmc4361A_writeSPR(TMC4361ATypeDef *tmc4361A) {
   OPERATION:   We write several bytes to the two ICs to configure their behaviors.
 
   ARGUMENTS:
-      TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
+  TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
       uint32_t clk_Hz_TMC4361:   Clock frequency we are driving the ICs at
 
   RETURNS: None
@@ -459,16 +459,66 @@ void tmc4361A_tmc2660_init(TMC4361ATypeDef *tmc4361A, uint32_t clk_Hz_TMC4361) {
   // SPI configuration
   tmc4361A_writeInt(tmc4361A, TMC4361A_SPIOUT_CONF, 0x4440108A);
   // cover datagram for TMC2660
-  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000900C3);
-  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000A0000);
-  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000C000A);
-  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000E00A0); // SDOFF = 1 -> SPI mode
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000900C3); // CHOPCONF
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000A0000); // SMARTEN
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000C000A); // SGCSCON
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000E00A1); // SDOFF = 1 -> SPI mode
   // current scaling
   tmc4361A_cScaleInit(tmc4361A);
   // microstepping setting
   tmc4361A_writeMicrosteps(tmc4361A);
   tmc4361A_writeSPR(tmc4361A);
   return;
+}
+
+/*
+  -----------------------------------------------------------------------------
+  DESCRIPTION: tmc4361A_tmc2660_disable_driver() shut off driver MOSFETs 
+
+  OPERATION:   shut off the driver MOSFETs to make axis to disable status
+
+  ARGUMENTS:
+      TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
+
+  RETURNS: None
+
+  LOCAL VARIABLES: None
+
+  SHARED VARIABLES:
+      TMC4361ATypeDef *tmc4361A: Values are read from the struct
+
+  GLOBAL VARIABLES: None
+
+  DEPENDENCIES: tmc4316A.h
+  -----------------------------------------------------------------------------
+*/
+void tmc4361A_tmc2660_disable_driver(TMC4361ATypeDef *tmc4361A) {
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000900C0); // CHOPCONF
+}
+
+/*
+  -----------------------------------------------------------------------------
+  DESCRIPTION: tmc4361A_tmc2660_enable_driver() enable driver MOSFETs to init argument value
+
+  OPERATION:   enable the driver MOSFETs to make axis to enable status
+
+  ARGUMENTS:
+      TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
+
+  RETURNS: None
+
+  LOCAL VARIABLES: None
+
+  SHARED VARIABLES:
+      TMC4361ATypeDef *tmc4361A: Values are read from the struct
+
+  GLOBAL VARIABLES: None
+
+  DEPENDENCIES: tmc4316A.h
+  -----------------------------------------------------------------------------
+*/
+void tmc4361A_tmc2660_enable_driver(TMC4361ATypeDef *tmc4361A) {
+  tmc4361A_writeInt(tmc4361A, TMC4361A_COVER_LOW_WR, 0x000900C3); // CHOPCONF
 }
 
 /*
@@ -670,6 +720,7 @@ int8_t tmc4361A_setVirtualLimit(TMC4361ATypeDef *tmc4361A, int dir, int32_t limi
       TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
       uint8_t polarity:          Polarity of the switch - 0 if active low, 1 if active high
       uint8_t which:             Which switch to use as home
+      uint16_t safety_margin:	 safty margin of home pointer around
 
   RETURNS: None
 
@@ -685,7 +736,7 @@ int8_t tmc4361A_setVirtualLimit(TMC4361ATypeDef *tmc4361A, int dir, int32_t limi
   DEPENDENCIES: tmc4316A.h
   -----------------------------------------------------------------------------
 */
-void tmc4361A_enableHomingLimit(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uint8_t which) {
+void tmc4361A_enableHomingLimit(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uint8_t which, uint16_t safety_margin) {
   if (which == LEFT_SW) {
     if (polarity != 0) {
       // If the left switch is active high, HOME_REF = 0 indicates positive direction in reference to X_HOME
@@ -711,7 +762,7 @@ void tmc4361A_enableHomingLimit(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uin
     tmc4361A_setBits(tmc4361A, TMC4361A_REFERENCE_CONF, TMC4361A_STOP_RIGHT_IS_HOME_MASK);
   }
   // have a safety margin around home
-  tmc4361A_setBits(tmc4361A, TMC4361A_HOME_SAFETY_MARGIN, 1 << 2);
+  tmc4361A_setBits(tmc4361A, TMC4361A_HOME_SAFETY_MARGIN, safety_margin);
 
   return;
 }
@@ -932,7 +983,7 @@ void tmc4361A_moveToExtreme(TMC4361ATypeDef *tmc4361A, int32_t vel, int8_t dir) 
   -----------------------------------------------------------------------------
 */
 void tmc4361A_sRampInit(TMC4361ATypeDef *tmc4361A) {
-  tmc4361A_setBits(tmc4361A, TMC4361A_RAMPMODE, 0b110); // positioning mode, s-shaped ramp
+  tmc4361A_setBits(tmc4361A, TMC4361A_RAMPMODE, TMC4361A_RAMP_POSITION | TMC4361A_RAMP_SSHAPE); // positioning mode, s-shaped ramp
   tmc4361A_rstBits(tmc4361A, TMC4361A_GENERAL_CONF, TMC4361A_USE_ASTART_AND_VSTART_MASK); // keep astart, vstart = 0
   tmc4361A_writeInt(tmc4361A, TMC4361A_BOW1, tmc4361A->rampParam[BOW1_IDX]); // determines the value which increases the absolute acceleration value.
   tmc4361A_writeInt(tmc4361A, TMC4361A_BOW2, tmc4361A->rampParam[BOW2_IDX]); // determines the value which decreases the absolute acceleration value.
@@ -1082,8 +1133,9 @@ void tmc4361A_setMaxSpeed(TMC4361ATypeDef *tmc4361A, int32_t velocity) {
   -----------------------------------------------------------------------------
 */
 void tmc4361A_setSpeed(TMC4361ATypeDef *tmc4361A, int32_t velocity) {
+  tmc4361A->velocity_mode = true;
   tmc4361A_readInt(tmc4361A, TMC4361A_EVENTS); // clear register
-  tmc4361A_rstBits(tmc4361A, TMC4361A_RAMPMODE, 0b100); // no velocity ramp
+  tmc4361A_rstBits(tmc4361A, TMC4361A_RAMPMODE, TMC4361A_RAMP_POSITION | TMC4361A_RAMP_HOLD); // no velocity ramp
   tmc4361A_writeInt(tmc4361A, TMC4361A_VMAX, velocity);
   return;
 }
@@ -1210,12 +1262,16 @@ int8_t tmc4361A_setMaxAcceleration(TMC4361ATypeDef *tmc4361A, uint32_t accelerat
   -----------------------------------------------------------------------------
 */
 int8_t tmc4361A_moveTo(TMC4361ATypeDef *tmc4361A, int32_t x_pos) {
-  // ensure we are in positioning mode with S-shaped ramp
-  tmc4361A_sRampInit(tmc4361A);
-
   if (x_pos < tmc4361A->xmin || x_pos > tmc4361A->xmax) {
     return ERR_OUT_OF_RANGE;
   }
+
+  if(tmc4361A->velocity_mode) {
+    // ensure we are in positioning mode with S-shaped ramp
+    tmc4361A_sRampInit(tmc4361A);
+    tmc4361A->velocity_mode = false;
+  }
+
   // Read events before and after to clear the register
   tmc4361A_readInt(tmc4361A, TMC4361A_EVENTS);
   tmc4361A_writeInt(tmc4361A, TMC4361A_X_TARGET, x_pos);
@@ -1408,6 +1464,7 @@ int8_t tmc4361A_setCurrentPosition(TMC4361ATypeDef *tmc4361A, int32_t position) 
   tmc4361A_writeInt(tmc4361A, TMC4361A_XACTUAL, position);
   tmc4361A_moveTo(tmc4361A, position);
 
+  tmc4361A->velocity_mode = true;
   return err;
 }
 
@@ -1651,6 +1708,36 @@ int32_t tmc4361A_read_encoder_vel(TMC4361ATypeDef *tmc4361A) {
 int32_t tmc4361A_read_encoder_vel_filtered(TMC4361ATypeDef *tmc4361A) {
   return tmc4361A_readInt(tmc4361A, TMC4361A_V_ENC_MEAN_RD);
 }
+
+/*
+  -----------------------------------------------------------------------------
+  DESCRIPTION: tmc4361A_write_encoder()
+
+  OPERATION:   We set encode value to register when need 
+
+  ARGUMENTS:
+      TMC4361ATypeDef *tmc4361A: Pointer to a struct containing motor driver info
+      int32_t value:  encode value 
+
+  RETURNS: None 
+
+  INPUTS / OUTPUTS: The CS pin and SPI MISO and MOSI pins output, input, and output data respectively
+
+  LOCAL VARIABLES:
+      None
+
+  SHARED VARIABLES:
+      None
+
+  GLOBAL VARIABLES: None
+
+  DEPENDENCIES: tmc4316A.h
+  -----------------------------------------------------------------------------
+*/
+void tmc4361A_write_encoder(TMC4361ATypeDef *tmc4361A, int32_t value) {
+  tmc4361A_writeInt(tmc4361A, TMC4361A_ENC_POS, value);
+}
+
 /*
   -----------------------------------------------------------------------------
   DESCRIPTION: tmc4361A_read_deviation() reads the difference between XACTUAL and ENC_POS

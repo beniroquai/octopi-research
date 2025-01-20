@@ -18,6 +18,8 @@
 // Functions for user-facing API
 void tmc4361A_tmc2660_config(TMC4361ATypeDef *tmc4361A, float tmc2660_cscale, float tmc4361a_hold_scale_val, float tmc4361a_drv2_scale_val, float tmc4361a_drv1_scale_val, float tmc4361a_boost_scale_val, float pitch_mm, uint16_t steps_per_rev, uint16_t microsteps, uint8_t dac_idx = NO_DAC, uint32_t dac_fullscale_msteps = 0);
 void tmc4361A_tmc2660_init(TMC4361ATypeDef *tmc4361A, uint32_t clk_Hz_TMC4361);
+void tmc4361A_tmc2660_enable_driver(TMC4361ATypeDef *tmc4361A);
+void tmc4361A_tmc2660_disable_driver(TMC4361ATypeDef *tmc4361A);
 void tmc4361A_tmc2660_update(TMC4361ATypeDef *tmc4361A);
 void tmc4361A_setMaxSpeed(TMC4361ATypeDef *tmc4361A, int32_t velocity);
 void tmc4361A_setSpeed(TMC4361ATypeDef *tmc4361A, int32_t velocity);
@@ -29,6 +31,7 @@ bool tmc4361A_read_deviation_flag(TMC4361ATypeDef *tmc4361A);
 int32_t tmc4361A_read_encoder(TMC4361ATypeDef *tmc4361A, uint8_t n_avg_exp);
 int32_t tmc4361A_read_encoder_vel(TMC4361ATypeDef *tmc4361A);
 int32_t tmc4361A_read_encoder_vel_filtered(TMC4361ATypeDef *tmc4361A);
+void tmc4361A_write_encoder(TMC4361ATypeDef *tmc4361A, int32_t value);
 int32_t tmc4361A_read_deviation(TMC4361ATypeDef *tmc4361A);
 int32_t tmc4361A_speed(TMC4361ATypeDef *tmc4361A);
 int32_t tmc4361A_acceleration(TMC4361ATypeDef *tmc4361A);
@@ -49,7 +52,7 @@ float   tmc4361A_vmicrostepsTomm(TMC4361ATypeDef *tmc4361A, int32_t microsteps);
 int32_t tmc4361A_ammToMicrosteps(TMC4361ATypeDef *tmc4361A, float mm);
 float   tmc4361A_amicrostepsTomm(TMC4361ATypeDef *tmc4361A, int32_t microsteps);
 void tmc4361A_enableLimitSwitch(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uint8_t which, uint8_t flipped);
-void tmc4361A_enableHomingLimit(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uint8_t which);
+void tmc4361A_enableHomingLimit(TMC4361ATypeDef *tmc4361A, uint8_t polarity, uint8_t which, uint16_t safety_margin);
 uint8_t tmc4361A_readLimitSwitches(TMC4361ATypeDef *tmc4361A);
 void tmc4361A_setHome(TMC4361ATypeDef *tmc4361A);
 void tmc4361A_moveToExtreme(TMC4361ATypeDef *tmc4361A, int32_t vel, int8_t dir);

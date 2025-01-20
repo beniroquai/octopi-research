@@ -1,0 +1,14 @@
+[tool.black]
+line-length = 120
+target-version = ["py34", "py35", "py36", "py38", "py39", "py310", "py311", "py312"]
+extend-exclude = '''
+(
+^/drivers and libraries/ 
+| ^/control/gxipy/ 
+| ^/control/RCM_API.py 
+| ^/control/TUCam.py 
+| ^/control/dcam.py 
+| ^/control/dcamapi4.py 
+| ^/control/toupcam.py 
+| ^/control/toupcam_exceptions.py
+)'''
