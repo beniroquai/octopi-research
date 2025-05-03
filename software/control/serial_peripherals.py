@@ -3,6 +3,8 @@ from serial.tools import list_ports
 import time
 from typing import Tuple, Optional
 import struct
+from control.lighting import LightSourceType, IntensityControlMode, ShutterControlMode
+from control._def import *
 from squid.abc import LightSource
 
 import squid.logging
@@ -184,11 +186,21 @@ class XLight_Simulation:
     def set_illumination_iris(self, value):
         # value: 0 - 100
         self.illumination_iris = value
+        print("illumination_iris", self.illumination_iris)
+        return self.illumination_iris
+
+    def get_illumination_iris(self):
+        self.illumination_iris = 100
         return self.illumination_iris
 
     def set_emission_iris(self, value):
         # value: 0 - 100
         self.emission_iris = value
+        print("emission_iris", self.emission_iris)
+        return self.emission_iris
+
+    def get_emission_iris(self):
+        self.emission_iris = 100
         return self.emission_iris
 
     def set_filter_slider(self, position):
@@ -244,6 +256,11 @@ class XLight:
 
         self.parse_idc_response(self.serial_connection.write_and_read("idc\r"))
         self.print_config()
+
+        if self.has_illumination_iris_diaphragm:
+            self.set_illumination_iris(XLIGHT_ILLUMINATION_IRIS_DEFAULT)
+        if self.has_emission_iris_diaphragm:
+            self.set_emission_iris(XLIGHT_EMISSION_IRIS_DEFAULT)
 
     def parse_idc_response(self, response):
         # Convert hexadecimal response to integer
@@ -347,11 +364,21 @@ class XLight:
         self.serial_connection.write_and_check("J" + value + "\r", "J" + value, read_delay=3)
         return self.illumination_iris
 
+    def get_illumination_iris(self):
+        current_pos = self.serial_connection.write_and_check("rJ\r", "rJ", read_delay=0.01)
+        self.illumination_iris = int(int(current_pos[2:]) / 10)
+        return self.illumination_iris
+
     def set_emission_iris(self, value):
         # value: 0 - 100
         self.emission_iris = value
         value = str(int(10 * value))
         self.serial_connection.write_and_check("V" + value + "\r", "V" + value, read_delay=3)
+        return self.emission_iris
+
+    def get_emission_iris(self):
+        current_pos = self.serial_connection.write_and_check("rV\r", "rV", read_delay=0.01)
+        self.emission_iris = int(int(current_pos[2:]) / 10)
         return self.emission_iris
 
     def set_filter_slider(self, position):
@@ -430,6 +457,7 @@ class LDI(LightSource):
             735: 730,
             750: 730,
         }
+        self.active_channel = None
 
     def initialize(self):
         self.serial_connection.write_and_check("run!\r", "ok")
@@ -459,32 +487,47 @@ class LDI(LightSource):
         intensity = "{:.2f}".format(intensity)
         self.log.debug("set:" + channel + "=" + intensity + "\r")
         self.serial_connection.write_and_check("set:" + channel + "=" + intensity + "\r", "ok")
-        self.log.debug("active channel: " + str(self.active_channel))
 
     def get_intensity(self, channel):
-        return 0  # To be implemented
+        try:
+            response = self.serial_connection.write_and_read("set?\r")
+            pairs = response.replace("SET:", "").split(",")
+            intensities = {}
+            for pair in pairs:
+                channel, value = pair.split("=")
+                intensities[int(channel)] = int(value)
+            return intensity[channel]
+        except:
+            return None
 
-    def get_intensity_range(self):
-        return [0, 100]
-
-    def set_shutter_state(self, channel, state):
+    def set_shutter_state(self, channel, on):
         channel = str(channel)
-        state = str(state)
+        state = str(on)
+        if self.active_channel is not None and channel != self.active_channel:
+            self.set_active_channel_shutter(False)
         self.serial_connection.write_and_check("shutter:" + channel + "=" + state + "\r", "ok")
+        if on:
+            self.active_channel = channel
 
     def get_shutter_state(self, channel):
-        self.serial_connection.write_and_check("shutter?\r", "")
-        return 0  # To be implemented
-
-    def set_active_channel(self, channel):
-        self.active_channel = channel
-        self.log.debug("[set active channel to " + str(channel) + "]")
+        try:
+            response = self.serial_connection.write_and_read("shutter?" + channel + "\r")
+            state = response.split("=")[1]
+            return 1 if state == "OPEN" else 0
+        except:
+            return None
 
     def set_active_channel_shutter(self, state):
         channel = str(self.active_channel)
         state = str(state)
         self.log.debug("shutter:" + channel + "=" + state + "\r")
         self.serial_connection.write_and_check("shutter:" + channel + "=" + state + "\r", "ok")
+
+    def shut_down(self):
+        for ch in list(set(self.channel_mappings.values())):
+            self.set_intensity(ch, 0)
+            self.set_shutter_state(ch, False)
+        self.serial_connection.close()
 
 
 class LDI_Simulation(LightSource):
@@ -516,47 +559,46 @@ class LDI_Simulation(LightSource):
     def initialize(self):
         pass
 
-    def set_shutter_mode(self, mode):
-        if mode == ShutterControlMode.TTL:
-            self.serial_connection.write_and_check("SH_MODE=EXT\r", "ok")
-        elif mode == ShutterControlMode.Software:
-            self.serial_connection.write_and_check("SH_MODE=PC\r", "ok")
+    def set_shutter_control_mode(self, mode):
         self.shutter_mode = mode
 
-    def set_intensity_mode(self, mode):
-        if mode == IntensityControlMode.SquidControllerDAC:
-            self.serial_connection.write_and_check("INT_MODE=EXT\r", "ok")
-        elif mode == IntensityControlMode.Software:
-            self.serial_connection.write_and_check("INT_MODE=PC\r", "ok")
+    def get_shutter_control_mode(self):
+        pass
+
+    def set_intensity_control_mode(self, mode):
         self.intensity_mode = mode
+
+    def get_intensity_control_mode(self):
+        pass
 
     def set_intensity(self, channel, intensity):
         channel = str(channel)
         intensity = "{:.2f}".format(intensity)
         self.log.debug("set:" + channel + "=" + intensity + "\r")
-        self.log.debug("active channel: " + str(self.active_channel))
 
     def get_intensity(self, channel):
-        return 0
+        return 100
 
-    def get_intensity_range(self):
-        return [0, 100]
-
-    def set_shutter_state(self, channel, state):
+    def set_shutter_state(self, channel, on):
         channel = str(channel)
-        state = str(state)
+        state = str(on)
+        if self.active_channel is not None and channel != self.active_channel:
+            self.set_active_channel_shutter(False)
+        if on:
+            self.active_channel = channel
 
     def get_shutter_state(self, channel):
-        return 0
-
-    def set_active_channel(self, channel):
-        self.active_channel = channel
-        self.log.debug("[set active channel to " + str(channel) + "]")
+        return 1
 
     def set_active_channel_shutter(self, state):
         channel = str(self.active_channel)
         state = str(state)
         self.log.debug("shutter:" + channel + "=" + state + "\r")
+
+    def shut_down(self):
+        for ch in list(set(self.channel_mappings.values())):
+            self.set_intensity(ch, 0)
+            self.set_shutter_state(ch, False)
 
 
 class SciMicroscopyLEDArray:
