@@ -64,7 +64,7 @@ if __name__ == "__main__":
     # This allows shutdown via ctrl+C even after the gui has popped up.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    win = gui.HighContentScreeningGui(is_simulation=args.simulation, live_only_mode=args.live_only)
+    win = gui.HighContentScreeningGui(is_simulation=1, live_only_mode=args.live_only)
 
     acq_config_action = QAction("Acquisition Settings", win)
     acq_config_action.triggered.connect(lambda: show_acq_config(win.configurationManager))
