@@ -8,10 +8,9 @@ from squid.abc import AbstractStage, Pos, StageStage
 from squid.config import StageConfig
 
 
-# NOTE/TODO(imo): We want to unblock getting the interface code implemented and in use, so to start we only
-# implemented the cephla stage.  As soon as we roll the interface out and get past the point of major refactors
-# to use it (we want to get past that point as fast as possible!), we'll come back to implement this.
 class PriorStage(AbstractStage):
+    POS_POLLING_PERIOD = 0.25
+
     def __init__(self, sn: str, baudrate: int = 115200, stage_config: StageConfig = None):
         # We are not using StageConfig for Prior stage now. Waiting for further update/clarification of this part
         super().__init__(stage_config)
@@ -49,7 +48,32 @@ class PriorStage(AbstractStage):
 
         self.set_baudrate(baudrate)
 
+        self._pos_polling_thread: Optional[threading.Timer] = None
+
         self._initialize()
+
+    def _pos_polling_thread_fn(self):
+        last_poll = time.time()
+        self._get_pos_poll_stage()
+        # We launch this as a Daemon, and have a mechanism for restarting it if needed.  So, just do a while True
+        # and do not worry about exceptions.
+        while True:
+            time_since_last = time.time() - last_poll
+            time_left = PriorStage.POS_POLLING_PERIOD - time_since_last
+            if time_left > 0:
+                time.sleep(time_left)
+
+            self._get_pos_poll_stage()
+            last_poll = time.time()
+
+    def _ensure_pos_polling_thread(self):
+        if self._pos_polling_thread and self._pos_polling_thread.is_alive():
+            return
+        self._log.info("Starting position polling thread.")
+        self._pos_polling_thread = threading.Thread(
+            target=self._pos_polling_thread_fn, daemon=True, name="prior-pos-polling"
+        )
+        self._pos_polling_thread.start()
 
     def set_baudrate(self, baud: int):
         allowed_baudrates = {9600: "96", 19200: "19", 38400: "38", 115200: "115"}
@@ -99,6 +123,7 @@ class PriorStage(AbstractStage):
         self.set_acceleration(self.acceleration)
         self.set_max_speed(self.speed)
         self._get_pos_poll_stage()
+        self._ensure_pos_polling_thread()
 
     def _send_command(self, command: str) -> str:
         with self.serial_lock:
@@ -214,6 +239,7 @@ class PriorStage(AbstractStage):
         self.y_pos = y
 
     def get_pos(self) -> Pos:
+        self._ensure_pos_polling_thread()
         x_mm = self._steps_to_mm(self.x_pos)
         y_mm = self._steps_to_mm(self.y_pos)
         return Pos(x_mm=x_mm, y_mm=y_mm, z_mm=0, theta_rad=0)

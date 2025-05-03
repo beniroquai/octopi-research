@@ -5,8 +5,8 @@ from pathlib import Path
 from configparser import ConfigParser
 import json
 import csv
-
 import squid.logging
+from enum import Enum, auto
 
 log = squid.logging.get_logger(__name__)
 
@@ -74,15 +74,6 @@ class Acquisition:
     NUMBER_OF_FOVS_PER_AF = 3
     IMAGE_FORMAT = "bmp"
     IMAGE_DISPLAY_SCALING_FACTOR = 0.3
-    PSEUDO_COLOR = False
-    MERGE_CHANNELS = False
-    PSEUDO_COLOR_MAP = {
-        "405": {"hex": 0x0000FF},  # blue
-        "488": {"hex": 0x00FF00},  # green
-        "561": {"hex": 0xFFCF00},  # yellow
-        "638": {"hex": 0xFF0000},  # red
-        "730": {"hex": 0x770000},  # dark red
-    }
     DX = 0.9
     DY = 0.9
     DZ = 1.5
@@ -241,6 +232,40 @@ class CAMERA_CONFIG:
     ROI_HEIGHT_DEFAULT = 2084
 
 
+class ZStageConfig(Enum):
+    STEPPER_ONLY = auto()
+    PIEZO_ONLY = auto()
+    STEPPER_AND_PIEZO = auto()
+
+    @classmethod
+    def from_string(cls, mode_str: str) -> "ZStageConfig":
+        mapping = {
+            "stepper_only": cls.STEPPER_ONLY,
+            "piezo_only": cls.PIEZO_ONLY,
+            "stepper_and_piezo": cls.STEPPER_AND_PIEZO,
+        }
+        if mode_str.lower() not in mapping:
+            raise ValueError(f"Invalid z_stage_mode. Must be one of: {', '.join(mapping.keys())}")
+        return mapping[mode_str.lower()]
+
+
+class SpotDetectionMode(Enum):
+    """Specifies which spot to detect when multiple spots are present.
+
+    SINGLE: Expect and detect single spot
+    DUAL_RIGHT: In dual-spot case, use rightmost spot
+    DUAL_LEFT: In dual-spot case, use leftmost spot
+    MULTI_RIGHT: In multi-spot case, use rightmost spot
+    MULTI_SECOND_RIGHT: In multi-spot case, use spot immediately left of rightmost spot
+    """
+
+    SINGLE = "single"
+    DUAL_RIGHT = "dual_right"
+    DUAL_LEFT = "dual_left"
+    MULTI_RIGHT = "multi_right"
+    MULTI_SECOND_RIGHT = "multi_second_right"
+
+
 PRINT_CAMERA_FPS = True
 
 ###########################################################
@@ -253,6 +278,8 @@ CAMERA_REVERSE_X = False
 CAMERA_REVERSE_Y = False
 
 DEFAULT_TRIGGER_MODE = TriggerMode.SOFTWARE
+
+BUFFER_SIZE_LIMIT = 4095
 
 # note: XY are the in-plane axes, Z is the focus axis
 
@@ -383,6 +410,7 @@ LED_MATRIX_G_FACTOR = 0
 LED_MATRIX_B_FACTOR = 1
 
 DEFAULT_SAVING_PATH = str(Path.home()) + "/Downloads"
+FILE_ID_PADDING = 0
 
 DEFAULT_PIXEL_FORMAT = "MONO12"
 
@@ -395,8 +423,6 @@ class PLATE_READER:
     OFFSET_COLUMN_1_MM = 20
     OFFSET_ROW_A_MM = 20
 
-
-DEFAULT_DISPLAY_CROP = 100  # value ranges from 1 to 100 - image display crop size
 
 CAMERA_PIXEL_SIZE_UM = {
     "IMX290": 2.9,
@@ -418,8 +444,6 @@ DEFAULT_TRACKER = "csrt"
 
 ENABLE_TRACKING = False
 TRACKING_SHOW_MICROSCOPE_CONFIGURATIONS = False  # set to true when doing multimodal acquisition
-if ENABLE_TRACKING:
-    DEFAULT_DISPLAY_CROP = 100
 
 
 class AF:
@@ -490,6 +514,8 @@ USE_OVERLAP_FOR_FLEXIBLE = True
 ENABLE_WELLPLATE_MULTIPOINT = True
 ENABLE_RECORDING = False
 
+RESUME_LIVE_AFTER_ACQUISITION = True
+
 CAMERA_SN = {"ch 1": "SN1", "ch 2": "SN2"}  # for multiple cameras, to be overwritten in the configuration file
 
 ENABLE_STROBE_OUTPUT = False
@@ -525,13 +551,22 @@ MAIN_CAMERA_MODEL = "MER2-1220-32U3M"
 FOCUS_CAMERA_MODEL = "MER2-630-60U3M"
 FOCUS_CAMERA_EXPOSURE_TIME_MS = 2
 FOCUS_CAMERA_ANALOG_GAIN = 0
-LASER_AF_AVERAGING_N = 5
+LASER_AF_AVERAGING_N = 3
 LASER_AF_DISPLAY_SPOT_IMAGE = True
 LASER_AF_CROP_WIDTH = 1536
 LASER_AF_CROP_HEIGHT = 256
-HAS_TWO_INTERFACES = True
-LASER_AF_RANGE = 200
-USE_GLASS_TOP = True
+LASER_AF_SPOT_DETECTION_MODE = SpotDetectionMode.DUAL_LEFT
+LASER_AF_RANGE = 100
+DISPLACEMENT_SUCCESS_WINDOW_UM = 1.0
+SPOT_CROP_SIZE = 100
+CORRELATION_THRESHOLD = 0.9
+PIXEL_TO_UM_CALIBRATION_DISTANCE = 6.0
+LASER_AF_Y_WINDOW = 96
+LASER_AF_X_WINDOW = 20
+LASER_AF_MIN_PEAK_WIDTH = 10
+LASER_AF_MIN_PEAK_DISTANCE = 10
+LASER_AF_MIN_PEAK_PROMINENCE = 0.25
+LASER_AF_SPOT_SPACING = 100
 SHOW_LEGACY_DISPLACEMENT_MEASUREMENT_WINDOWS = False
 
 MULTIPOINT_REFLECTION_AUTOFOCUS_ENABLE_BY_DEFAULT = False
@@ -572,10 +607,18 @@ LDI_INTENSITY_MODE = "PC"
 LDI_SHUTTER_MODE = "PC"
 USE_CELESTA_ETHENET_CONTROL = False
 
-XLIGHT_EMISSION_FILTER_MAPPING = {405: 1, 470: 2, 555: 3, 640: 4, 730: 5}
+XLIGHT_EMISSION_FILTER_MAPPING = {
+    405: 1,
+    470: 1,
+    555: 1,
+    640: 1,
+    730: 1,
+}  # TODO: This is not being used. Need to map wavelength to illumination source in LiveController
 XLIGHT_SERIAL_NUMBER = "B00031BE"
 XLIGHT_SLEEP_TIME_FOR_WHEEL = 0.25
 XLIGHT_VALIDATE_WHEEL_POS = False
+XLIGHT_ILLUMINATION_IRIS_DEFAULT = 100
+XLIGHT_EMISSION_IRIS_DEFAULT = 100
 
 # Confocal.nl NL5 integration
 ENABLE_NL5 = False
@@ -597,7 +640,7 @@ USE_NAPARI_FOR_MOSAIC_DISPLAY = True
 USE_NAPARI_WELL_SELECTION = False
 USE_NAPARI_FOR_LIVE_CONTROL = False
 LIVE_ONLY_MODE = False
-PRVIEW_DOWNSAMPLE_FACTOR = 5
+MOSAIC_VIEW_TARGET_PIXEL_SIZE_UM = 2
 
 # Controller SN (needed when using multiple teensy-based connections)
 CONTROLLER_SN = None
@@ -618,8 +661,10 @@ ENABLE_STITCHER = False
 IS_HCS = False
 DYNAMIC_REGISTRATION = False
 STITCH_COMPLETE_ACQUISITION = False
+
+# Pseudo color settings
 CHANNEL_COLORS_MAP = {
-    "405": {"hex": 0x3300FF, "name": "blue"},
+    "405": {"hex": 0x20ADF8, "name": "bop blue"},
     "488": {"hex": 0x1FFF00, "name": "green"},
     "561": {"hex": 0xFFCF00, "name": "yellow"},
     "638": {"hex": 0xFF0000, "name": "red"},
@@ -628,6 +673,8 @@ CHANNEL_COLORS_MAP = {
     "G": {"hex": 0x1FFF00, "name": "green"},
     "B": {"hex": 0x3300FF, "name": "blue"},
 }
+SAVE_IN_PSEUDO_COLOR = False
+MERGE_CHANNELS = False
 
 # Emission filter wheel
 USE_ZABER_EMISSION_FILTER_WHEEL = False
@@ -642,7 +689,7 @@ OPTOSPIN_EMISSION_FILTER_WHEEL_TTL_TRIGGER = False
 USE_SQUID_FILTERWHEEL = False
 SQUID_FILTERWHEEL_MAX_INDEX = 8
 SQUID_FILTERWHEEL_MIN_INDEX = 1
-SQUID_FILTERWHEEL_OFFSET = 0.01
+SQUID_FILTERWHEEL_OFFSET = 0.008
 SQUID_FILTERWHEEL_HOMING_ENABLED = True
 SQUID_FILTERWHEEL_MOTORSLOTINDEX = 3
 SQUID_FILTERWHEEL_TRANSITIONS_PER_REVOLUTION = 4000
@@ -717,6 +764,29 @@ SAMPLE_FORMATS_CSV_PATH = "sample_formats.csv"
 
 OBJECTIVES, WELLPLATE_FORMAT_SETTINGS = load_formats()
 
+# limit switch
+X_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.X_HOME
+Y_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.Y_HOME
+Z_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.Z_HOME
+
+# home safety margin with (um) unit
+X_HOME_SAFETY_MARGIN_UM = 50
+Y_HOME_SAFETY_MARGIN_UM = 50
+Z_HOME_SAFETY_MARGIN_UM = 600
+
+USE_XERYON = False
+XERYON_SERIAL_NUMBER = "95130303033351E02050"
+XERYON_SPEED = 80
+XERYON_OBJECTIVE_SWITCHER_POS_1 = ["4x", "10x"]
+XERYON_OBJECTIVE_SWITCHER_POS_2 = ["20x", "40x", "60x"]
+XERYON_OBJECTIVE_SWITCHER_POS_2_OFFSET_MM = 2
+
+# fluidics
+RUN_FLUIDICS = False
+FLUIDICS_CONFIG_PATH = "./merfish_config/MERFISH_config.json"
+
+USE_TEMPLATE_MULTIPOINT = False
+
 ##########################################################
 #### start of loading machine specific configurations ####
 ##########################################################
@@ -724,7 +794,6 @@ CACHED_CONFIG_FILE_PATH = None
 
 # Piezo configuration items
 Z_MOTOR_CONFIG = "STEPPER"  # "STEPPER", "STEPPER + PIEZO", "PIEZO", "LINEAR"
-ENABLE_OBJECTIVE_PIEZO = "PIEZO" in Z_MOTOR_CONFIG
 
 # the value of OBJECTIVE_PIEZO_CONTROL_VOLTAGE_RANGE is 2.5 or 5
 OBJECTIVE_PIEZO_CONTROL_VOLTAGE_RANGE = 5
@@ -732,13 +801,15 @@ OBJECTIVE_PIEZO_RANGE_UM = 300
 OBJECTIVE_PIEZO_HOME_UM = 20
 OBJECTIVE_PIEZO_FLIP_DIR = False
 
-MULTIPOINT_USE_PIEZO_FOR_ZSTACKS = ENABLE_OBJECTIVE_PIEZO
 MULTIPOINT_PIEZO_DELAY_MS = 20
 MULTIPOINT_PIEZO_UPDATE_DISPLAY = True
 
 AWB_RATIOS_R = 1.375
 AWB_RATIOS_G = 1
 AWB_RATIOS_B = 1.4141
+
+USE_TERMINAL_CONSOLE = False
+USE_JUPYTER_CONSOLE = False
 
 try:
     with open("cache/config_file_path.txt", "r") as file:
@@ -829,22 +900,9 @@ A1_Y_PIXEL = WELLPLATE_FORMAT_SETTINGS[WELLPLATE_FORMAT]["a1_y_pixel"]  # coordi
 ##########################################################
 
 # objective piezo
-if ENABLE_OBJECTIVE_PIEZO == False:
-    MULTIPOINT_USE_PIEZO_FOR_ZSTACKS = False
+HAS_OBJECTIVE_PIEZO = "PIEZO" in Z_MOTOR_CONFIG
+MULTIPOINT_USE_PIEZO_FOR_ZSTACKS = HAS_OBJECTIVE_PIEZO
 
 # saving path
 if not (DEFAULT_SAVING_PATH.startswith(str(Path.home()))):
     DEFAULT_SAVING_PATH = str(Path.home()) + "/" + DEFAULT_SAVING_PATH.strip("/")
-
-# limit switch
-X_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.X_HOME
-Y_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.Y_HOME
-Z_HOME_SWITCH_POLARITY = LIMIT_SWITCH_POLARITY.Z_HOME
-
-# home safety margin with (um) unit
-X_HOME_SAFETY_MARGIN_UM = 50
-Y_HOME_SAFETY_MARGIN_UM = 50
-Z_HOME_SAFETY_MARGIN_UM = 600
-
-if ENABLE_TRACKING:
-    DEFAULT_DISPLAY_CROP = Tracking.DEFAULT_DISPLAY_CROP
