@@ -168,7 +168,6 @@ class HighContentScreeningGui(QMainWindow):
             self.addDockWidget(Qt.LeftDockWidgetArea, self.jupyter_dock)
 
     def loadObjects(self, is_simulation):
-        self.illuminationController = None
         if is_simulation:
             self.loadSimulationObjects()
         else:
@@ -283,7 +282,7 @@ class HighContentScreeningGui(QMainWindow):
             self.autofocusController,
             self.objectiveStore,
             self.channelConfigurationManager,
-            scanCoordinates=self.scanCoordinates,
+            scan_coordinates=self.scanCoordinates,
             fluidics=self.fluidics,
             parent=self,
         )
@@ -319,6 +318,7 @@ class HighContentScreeningGui(QMainWindow):
         self.microcontroller = microcontroller.Microcontroller(
             serial_device=microcontroller.get_microcontroller_serial_device(simulated=True)
         )
+        self.illuminationController = IlluminationController(self.microcontroller)
         if USE_PRIOR_STAGE:
             self.stage: squid.abc.AbstractStage = squid.stage.prior.PriorStage(
                 sn=PRIOR_STAGE_SN, stage_config=squid.config.get_stage_config()
@@ -374,6 +374,8 @@ class HighContentScreeningGui(QMainWindow):
         except Exception:
             self.log.error(f"Error initializing Microcontroller")
             raise
+
+        self.illuminationController = IlluminationController(self.microcontroller)
 
         if USE_PRIOR_STAGE:
             self.stage: squid.abc.AbstractStage = squid.stage.prior.PriorStage(
@@ -1671,13 +1673,6 @@ class HighContentScreeningGui(QMainWindow):
 
         self.liveController.stop_live()
         self.camera.stop_streaming()
-
-        if HOMING_ENABLED_X and HOMING_ENABLED_Y:
-            # TODO(imo): Why do we move forward 0.1, then move to 30? AKA why not just move to 30?
-            self.stage.move_x(0.1)
-            self.stage.move_x_to(30)
-            self.stage.move_y(0.1)
-            self.stage.move_y_to(30)
 
         self.microcontroller.turn_off_all_pid()
 

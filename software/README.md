@@ -6,13 +6,6 @@ chmod +x setup_22.04.sh
 ./setup_22.04.sh
 ```
 
-Then run this script to set up cuda
-```
-wget https://raw.githubusercontent.com/Cephla-Lab/Squid/master/software/setup_cuda_22.04.sh
-chmod +x setup_cuda_22.04.sh
-./setup_cuda_22.04.sh
-```
-
 Reboot the computer to finish the installation.
 
 ## Optional or Hardware-specific dependencies

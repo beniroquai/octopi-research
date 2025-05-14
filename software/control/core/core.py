@@ -19,11 +19,7 @@ from qtpy.QtGui import *
 
 # control
 from control._def import *
-
-if DO_FLUORESCENCE_RTP:
-    from control.processing_handler import ProcessingHandler
-    from control.processing_pipeline import *
-    from control.multipoint_built_in_functionalities import malaria_rtp
+from control.core.multi_point_worker import MultiPointWorker
 
 import control.utils as utils
 import control.utils_acquisition as utils_acquisition
@@ -440,28 +436,32 @@ class LiveController(QObject):
 
     # illumination control
     def turn_on_illumination(self):
-        if self.illuminationController is not None and not "LED matrix" in self.currentConfiguration.name:
+        if not "LED matrix" in self.currentConfiguration.name:
             self.illuminationController.turn_on_illumination(
                 int(utils_channel.extract_wavelength_from_config_name(self.currentConfiguration.name))
             )
         elif SUPPORT_SCIMICROSCOPY_LED_ARRAY and "LED matrix" in self.currentConfiguration.name:
             self.led_array.turn_on_illumination()
+        # LED matrix
         else:
-            self.microcontroller.turn_on_illumination()
+            self.microcontroller.turn_on_illumination()  # to wrap microcontroller in Squid_led_array
         self.illumination_on = True
 
     def turn_off_illumination(self):
-        if self.illuminationController is not None and not "LED matrix" in self.currentConfiguration.name:
+        if not "LED matrix" in self.currentConfiguration.name:
             self.illuminationController.turn_off_illumination(
                 int(utils_channel.extract_wavelength_from_config_name(self.currentConfiguration.name))
             )
         elif SUPPORT_SCIMICROSCOPY_LED_ARRAY and "LED matrix" in self.currentConfiguration.name:
             self.led_array.turn_off_illumination()
+        # LED matrix
         else:
-            self.microcontroller.turn_off_illumination()
+            self.microcontroller.turn_off_illumination()  # to wrap microcontroller in Squid_led_array
         self.illumination_on = False
 
-    def set_illumination(self, illumination_source, intensity, update_channel_settings=True):
+    def update_illumination(self):
+        illumination_source = self.currentConfiguration.illumination_source
+        intensity = self.currentConfiguration.illumination_intensity
         if illumination_source < 10:  # LED matrix
             if SUPPORT_SCIMICROSCOPY_LED_ARRAY:
                 # set color
@@ -504,19 +504,14 @@ class LiveController(QObject):
                     )
         else:
             # update illumination
-            if self.illuminationController is not None:
-                self.illuminationController.set_intensity(
-                    int(utils_channel.extract_wavelength_from_config_name(self.currentConfiguration.name)), intensity
-                )
-            elif ENABLE_NL5 and NL5_USE_DOUT and "Fluorescence" in self.currentConfiguration.name:
-                wavelength = int(self.currentConfiguration.name[13:16])
+            wavelength = int(utils_channel.extract_wavelength_from_config_name(self.currentConfiguration.name))
+            self.illuminationController.set_intensity(wavelength, intensity)
+            if ENABLE_NL5 and NL5_USE_DOUT and "Fluorescence" in self.currentConfiguration.name:
                 self.microscope.nl5.set_active_channel(NL5_WAVENLENGTH_MAP[wavelength])
-                if NL5_USE_AOUT and update_channel_settings:
+                if NL5_USE_AOUT:
                     self.microscope.nl5.set_laser_power(NL5_WAVENLENGTH_MAP[wavelength], int(intensity))
                 if ENABLE_CELLX:
                     self.microscope.cellx.set_laser_power(NL5_WAVENLENGTH_MAP[wavelength], int(intensity))
-            else:
-                self.microcontroller.set_illumination(illumination_source, intensity)
 
         # set emission filter position
         if ENABLE_SPINNING_DISK_CONFOCAL:
@@ -698,9 +693,7 @@ class LiveController(QObject):
 
         # set illumination
         if self.control_illumination:
-            self.set_illumination(
-                self.currentConfiguration.illumination_source, self.currentConfiguration.illumination_intensity
-            )
+            self.update_illumination()
 
         # restart live
         if self.is_live is True:
@@ -856,14 +849,6 @@ class SlidePositionControlWorker(QObject):
 
         # restore z
         if self.slidePositionController.objective_retracted:
-            # NOTE(imo): We want to move backlash compensation down to the firmware level.  Also, before the Stage
-            # migration, we only compensated for backlash in the case that we were using PID control.  Since that
-            # info isn't plumbed through yet (or ever from now on?), we just always compensate now.  It doesn't hurt
-            # in the case of not needing it, except that it's a little slower because we need 2 moves.
-            mm_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-                max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-            )
-            self.stage.move_z_to(self.slidePositionController.z_pos - mm_to_clear_backlash)
             self.stage.move_z_to(self.slidePositionController.z_pos)
             self.slidePositionController.objective_retracted = False
             print("z position restored")
@@ -981,14 +966,7 @@ class AutofocusWorker(QObject):
 
         z_af_offset = self.deltaZ * round(self.N / 2)
 
-        # maneuver for achiving uniform step size and repeatability when using open-loop control
-        # can be moved to the firmware
-        mm_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-            max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-        )
-
-        self.stage.move_z(-mm_to_clear_backlash - z_af_offset)
-        self.stage.move_z(mm_to_clear_backlash)
+        self.stage.move_z(-z_af_offset)
 
         steps_moved = 0
         for i in range(self.N):
@@ -1034,14 +1012,10 @@ class AutofocusWorker(QObject):
         QApplication.processEvents()
 
         # maneuver for achiving uniform step size and repeatability when using open-loop control
-        # TODO(imo): The backlash handling should be done at a lower level.  For now, do backlash compensation no matter if it makes sense to do or not (it is not harmful if it doesn't make sense)
-        mm_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-            max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-        )
-        self.stage.move_z(-mm_to_clear_backlash - steps_moved * self.deltaZ)
+        self.stage.move_z(-steps_moved * self.deltaZ)
         # determine the in-focus position
         idx_in_focus = focus_measure_vs_z.index(max(focus_measure_vs_z))
-        self.stage.move_z(mm_to_clear_backlash + (idx_in_focus + 1) * self.deltaZ)
+        self.stage.move_z((idx_in_focus + 1) * self.deltaZ)
 
         QApplication.processEvents()
 
@@ -1249,795 +1223,725 @@ class AutoFocusController(QObject):
         print(f"Added triple ({x},{y},{z}) to focus map")
 
 
-class MultiPointWorker(QObject):
+class ConfigType(Enum):
+    CHANNEL = "channel"
+    CONFOCAL = "confocal"
+    WIDEFIELD = "widefield"
 
-    finished = Signal()
-    image_to_display = Signal(np.ndarray)
-    spectrum_to_display = Signal(np.ndarray)
-    image_to_display_multi = Signal(np.ndarray, int)
-    signal_current_configuration = Signal(ChannelMode)
-    signal_register_current_fov = Signal(float, float)
-    signal_detection_stats = Signal(object)
-    signal_update_stats = Signal(object)
-    signal_z_piezo_um = Signal(float)
-    napari_layers_init = Signal(int, int, object)
-    napari_layers_update = Signal(np.ndarray, float, float, int, str)  # image, x_mm, y_mm, k, channel
-    napari_rtp_layers_update = Signal(np.ndarray, str)
-    signal_acquisition_progress = Signal(int, int, int)
-    signal_region_progress = Signal(int, int)
 
-    def __init__(self, multiPointController):
-        QObject.__init__(self)
-        self.multiPointController = multiPointController
-        self._log = squid.logging.get_logger(__class__.__name__)
-        self.signal_update_stats.connect(self.update_stats)
-        self.start_time = 0
-        if DO_FLUORESCENCE_RTP:
-            self.processingHandler = multiPointController.processingHandler
-        self.camera: AbstractCamera = self.multiPointController.camera
-        self.microcontroller = self.multiPointController.microcontroller
-        self.usb_spectrometer = self.multiPointController.usb_spectrometer
-        self.stage: squid.abc.AbstractStage = self.multiPointController.stage
-        self.piezo: PiezoStage = self.multiPointController.piezo
-        self.liveController = self.multiPointController.liveController
-        self.autofocusController = self.multiPointController.autofocusController
-        self.objectiveStore = self.multiPointController.objectiveStore
-        self.channelConfigurationManager = self.multiPointController.channelConfigurationManager
-        self.NX = self.multiPointController.NX
-        self.NY = self.multiPointController.NY
-        self.NZ = self.multiPointController.NZ
-        self.Nt = self.multiPointController.Nt
-        self.deltaX = self.multiPointController.deltaX
-        self.deltaY = self.multiPointController.deltaY
-        self.deltaZ = self.multiPointController.deltaZ
-        self.dt = self.multiPointController.deltat
-        self.do_autofocus = self.multiPointController.do_autofocus
-        self.do_reflection_af = self.multiPointController.do_reflection_af
-        self.crop_width = self.multiPointController.crop_width
-        self.crop_height = self.multiPointController.crop_height
-        self.display_resolution_scaling = self.multiPointController.display_resolution_scaling
-        self.counter = self.multiPointController.counter
-        self.experiment_ID = self.multiPointController.experiment_ID
-        self.base_path = self.multiPointController.base_path
-        self.selected_configurations = self.multiPointController.selected_configurations
-        self.use_piezo = self.multiPointController.use_piezo
-        self.detection_stats = {}
-        self.async_detection_stats = {}
-        self.timestamp_acquisition_started = self.multiPointController.timestamp_acquisition_started
-        self.time_point = 0
-        self.af_fov_count = 0
-        self.num_fovs = 0
-        self.total_scans = 0
-        self.scan_region_fov_coords_mm = self.multiPointController.scan_region_fov_coords_mm.copy()
-        self.scan_region_coords_mm = self.multiPointController.scan_region_coords_mm
-        self.scan_region_names = self.multiPointController.scan_region_names
-        self.z_stacking_config = self.multiPointController.z_stacking_config  # default 'from bottom'
-        self.z_range = self.multiPointController.z_range
-        self.fluidics = self.multiPointController.fluidics
-
-        self.headless = self.multiPointController.headless
-        self.microscope = self.multiPointController.parent
-        self.performance_mode = self.microscope and self.microscope.performance_mode
-
-        try:
-            self.model = self.microscope.segmentation_model
-        except:
-            pass
-        self.crop = SEGMENTATION_CROP
-
-        self.t_dpc = []
-        self.t_inf = []
-        self.t_over = []
-
-        self.init_napari_layers = not USE_NAPARI_FOR_MULTIPOINT
-
-        self.count = 0
-
-        self.merged_image = None
-        self.image_count = 0
-
-    def update_stats(self, new_stats):
-        self.count += 1
-        self._log.info("stats", self.count)
-        for k in new_stats.keys():
-            try:
-                self.detection_stats[k] += new_stats[k]
-            except:
-                self.detection_stats[k] = 0
-                self.detection_stats[k] += new_stats[k]
-        if "Total RBC" in self.detection_stats and "Total Positives" in self.detection_stats:
-            self.detection_stats["Positives per 5M RBC"] = 5e6 * (
-                self.detection_stats["Total Positives"] / self.detection_stats["Total RBC"]
-            )
-        self.signal_detection_stats.emit(self.detection_stats)
-
-    def update_use_piezo(self, value):
-        self.use_piezo = value
-        self._log.info(f"MultiPointWorker: updated use_piezo to {value}")
-
-    def run(self):
-        try:
-            self.start_time = time.perf_counter_ns()
-            self.camera.start_streaming()
-
-            while self.time_point < self.Nt:
-                # check if abort acquisition has been requested
-                if self.multiPointController.abort_acqusition_requested:
-                    self._log.debug("In run, abort_acquisition_requested=True")
-                    break
-
-                if self.fluidics and self.multiPointController.use_fluidics:
-                    self.fluidics.update_port(self.time_point)  # use the port in PORT_LIST
-                    # For MERFISH, before imaging, run the first 3 sequences (Add probe, wash buffer, imaging buffer)
-                    self.fluidics.run_before_imaging()
-                    self.fluidics.wait_for_completion()
-
-                self.run_single_time_point()
-
-                if self.fluidics and self.multiPointController.use_fluidics:
-                    # For MERFISH, after imaging, run the following 2 sequences (Cleavage buffer, SSC rinse)
-                    self.fluidics.run_after_imaging()
-                    self.fluidics.wait_for_completion()
-
-                self.time_point = self.time_point + 1
-                if self.dt == 0:  # continous acquisition
-                    pass
-                else:  # timed acquisition
-
-                    # check if the aquisition has taken longer than dt or integer multiples of dt, if so skip the next time point(s)
-                    while time.time() > self.timestamp_acquisition_started + self.time_point * self.dt:
-                        self._log.info("skip time point " + str(self.time_point + 1))
-                        self.time_point = self.time_point + 1
-
-                    # check if it has reached Nt
-                    if self.time_point == self.Nt:
-                        break  # no waiting after taking the last time point
-
-                    # wait until it's time to do the next acquisition
-                    while time.time() < self.timestamp_acquisition_started + self.time_point * self.dt:
-                        if self.multiPointController.abort_acqusition_requested:
-                            self._log.debug("In run wait loop, abort_acquisition_requested=True")
-                            break
-                        time.sleep(0.05)
-
-            elapsed_time = time.perf_counter_ns() - self.start_time
-            self._log.info("Time taken for acquisition: " + str(elapsed_time / 10**9))
-
-            # End processing using the updated method
-            if DO_FLUORESCENCE_RTP:
-                self.processingHandler.processing_queue.join()
-                self.processingHandler.upload_queue.join()
-                self.processingHandler.end_processing()
-
-            self._log.info(
-                f"Time taken for acquisition/processing: {(time.perf_counter_ns() - self.start_time) / 1e9} [s]"
-            )
-        except TimeoutError as te:
-            self._log.error(f"Operation timed out during acquisition, aborting acquisition!")
-            self._log.error(te)
-            self.multiPointController.request_abort_aquisition()
-        if not self.headless:
-            self.finished.emit()
-
-    def wait_till_operation_is_completed(self):
-        while self.microcontroller.is_busy():
-            time.sleep(SLEEP_TIME_S)
-
-    def run_single_time_point(self):
-        start = time.time()
-        self.microcontroller.enable_joystick(False)
-
-        self._log.debug("multipoint acquisition - time point " + str(self.time_point + 1))
-
-        # for each time point, create a new folder
-        current_path = os.path.join(self.base_path, self.experiment_ID, f"{self.time_point:0{FILE_ID_PADDING}}")
-        utils.ensure_directory_exists(current_path)
-
-        slide_path = os.path.join(self.base_path, self.experiment_ID)
-
-        # create a dataframe to save coordinates
-        self.initialize_coordinates_dataframe()
-
-        # init z parameters, z range
-        self.initialize_z_stack()
-
-        self.run_coordinate_acquisition(current_path)
-
-        # finished region scan
-        self.coordinates_pd.to_csv(os.path.join(current_path, "coordinates.csv"), index=False, header=True)
-
-        # Emit the xyz data for plotting
-        if len(self.coordinates_pd) > 1:
-            x = self.coordinates_pd["x (mm)"].values
-            y = self.coordinates_pd["y (mm)"].values
-
-            # When performing a z-stack (NZ > 1), only use the bottom z position for each (x,y) location
-            if self.NZ > 1:
-                # Create a copy to avoid modifying the original dataframe
-                plot_df = self.coordinates_pd.copy()
-
-                # Group by x, y, region and get the minimum z value for each group
-                if "z_piezo (um)" in plot_df.columns:
-                    # Calculate total z for grouping
-                    plot_df["total_z"] = plot_df["z (um)"] + plot_df["z_piezo (um)"]
-                    # Group by x, y, region and get indices of minimum z values
-                    idx = plot_df.groupby(["x (mm)", "y (mm)", "region"])["total_z"].idxmin()
-                    # Filter the dataframe to only include bottom z positions
-                    plot_df = plot_df.loc[idx]
-                    z = plot_df["z (um)"].values + plot_df["z_piezo (um)"].values
-                else:
-                    # Group by x, y, region and get indices of minimum z values
-                    idx = plot_df.groupby(["x (mm)", "y (mm)", "region"])["z (um)"].idxmin()
-                    # Filter the dataframe to only include bottom z positions
-                    plot_df = plot_df.loc[idx]
-                    z = plot_df["z (um)"].values
-
-                # Get the filtered x, y, region values
-                x = plot_df["x (mm)"].values
-                y = plot_df["y (mm)"].values
-                region = plot_df["region"].values
-            else:
-                # For single z acquisitions, use all points as before
-                if "z_piezo (um)" in self.coordinates_pd.columns:
-                    z = self.coordinates_pd["z (um)"].values + self.coordinates_pd["z_piezo (um)"].values
-                else:
-                    z = self.coordinates_pd["z (um)"].values
-                region = self.coordinates_pd["region"].values
-
-            x = np.array(x).astype(float)
-            y = np.array(y).astype(float)
-            z = np.array(z).astype(float)
-            self.multiPointController.signal_coordinates.emit(x, y, z, region)
-
-        utils.create_done_file(current_path)
-        # TODO(imo): If anything throws above, we don't re-enable the joystick
-        self.microcontroller.enable_joystick(True)
-        self._log.debug(f"Single time point took: {time.time() - start} [s]")
-
-    def initialize_z_stack(self):
-        self.count_rtp = 0
-
-        # z stacking config
-        if self.z_stacking_config == "FROM TOP":
-            self.deltaZ = -abs(self.deltaZ)
-            self.move_to_z_level(self.z_range[1])
-        else:
-            self.move_to_z_level(self.z_range[0])
-
-        self.z_pos = self.stage.get_pos().z_mm  # zpos at the beginning of the scan
-
-    def initialize_coordinates_dataframe(self):
-        base_columns = ["z_level", "x (mm)", "y (mm)", "z (um)", "time"]
-        piezo_column = ["z_piezo (um)"] if self.use_piezo else []
-        self.coordinates_pd = pd.DataFrame(columns=["region", "fov"] + base_columns + piezo_column)
-
-    def update_coordinates_dataframe(self, region_id, z_level, fov=None):
-        pos = self.stage.get_pos()
-        base_data = {
-            "z_level": [z_level],
-            "x (mm)": [pos.x_mm],
-            "y (mm)": [pos.y_mm],
-            "z (um)": [pos.z_mm * 1000],
-            "time": [datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")],
+class ChannelConfigurationManager:
+    def __init__(self):
+        self._log = squid.logging.get_logger(self.__class__.__name__)
+        self.config_root = None
+        self.all_configs: Dict[ConfigType, Dict[str, ChannelConfig]] = {
+            ConfigType.CHANNEL: {},
+            ConfigType.CONFOCAL: {},
+            ConfigType.WIDEFIELD: {},
         }
-        piezo_data = {"z_piezo (um)": [self.z_piezo_um]} if self.use_piezo else {}
+        self.active_config_type = ConfigType.CHANNEL if not ENABLE_SPINNING_DISK_CONFOCAL else ConfigType.CONFOCAL
 
-        new_row = pd.DataFrame({"region": [region_id], "fov": [fov], **base_data, **piezo_data})
+    def set_profile_path(self, profile_path: Path) -> None:
+        """Set the root path for configurations"""
+        self.config_root = profile_path
 
-        self.coordinates_pd = pd.concat([self.coordinates_pd, new_row], ignore_index=True)
+    def _load_xml_config(self, objective: str, config_type: ConfigType) -> None:
+        """Load XML configuration for a specific config type, generating default if needed"""
+        config_file = self.config_root / objective / f"{config_type.value}_configurations.xml"
 
-    def move_to_coordinate(self, coordinate_mm):
-        print("moving to coordinate", coordinate_mm)
-        x_mm = coordinate_mm[0]
-        self.stage.move_x_to(x_mm)
-        time.sleep(SCAN_STABILIZATION_TIME_MS_X / 1000)
+        if not config_file.exists():
+            utils_config.generate_default_configuration(str(config_file))
 
-        y_mm = coordinate_mm[1]
-        self.stage.move_y_to(y_mm)
-        time.sleep(SCAN_STABILIZATION_TIME_MS_Y / 1000)
+        xml_content = config_file.read_bytes()
+        self.all_configs[config_type][objective] = ChannelConfig.from_xml(xml_content)
 
-        # check if z is included in the coordinate
-        if len(coordinate_mm) == 3:
-            z_mm = coordinate_mm[2]
-            self.move_to_z_level(z_mm)
+    def load_configurations(self, objective: str) -> None:
+        """Load available configurations for an objective"""
+        if ENABLE_SPINNING_DISK_CONFOCAL:
+            # Load both confocal and widefield configurations
+            self._load_xml_config(objective, ConfigType.CONFOCAL)
+            self._load_xml_config(objective, ConfigType.WIDEFIELD)
+        else:
+            # Load only channel configurations
+            self._load_xml_config(objective, ConfigType.CHANNEL)
 
-    def move_to_z_level(self, z_mm):
-        print("moving z")
-        self.stage.move_z_to(z_mm)
-        # TODO(imo): If we are moving to a more +z position, we'll approach the position from the negative side.  But then our backlash elimination goes negative and positive.  This seems like the final move is in the same direction as the original full move?  Does that actually eliminate backlash?
-        if z_mm >= self.stage.get_pos().z_mm:
-            # Attempt to remove backlash.
-            # TODO(imo): We used to only do this if in PID control mode, but we don't expose the PID mode settings
-            # yet, so for now just do this for all.
-            # TODO(imo): Ideally this would be done at a lower level, and only if needed.  As is we only remove backlash in this specific case (and no other Z moves!)
-            distance_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-                max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-            )
-            self.stage.move_z(-distance_to_clear_backlash)
-            self.stage.move_z(distance_to_clear_backlash)
-        time.sleep(SCAN_STABILIZATION_TIME_MS_Z / 1000)
-
-    def run_coordinate_acquisition(self, current_path):
-        n_regions = len(self.scan_region_coords_mm)
-
-        for region_index, (region_id, coordinates) in enumerate(self.scan_region_fov_coords_mm.items()):
-
-            self.signal_acquisition_progress.emit(region_index + 1, n_regions, self.time_point)
-
-            self.num_fovs = len(coordinates)
-            self.total_scans = self.num_fovs * self.NZ * len(self.selected_configurations)
-
-            for fov_count, coordinate_mm in enumerate(coordinates):
-
-                self.move_to_coordinate(coordinate_mm)
-                self.acquire_at_position(region_id, current_path, fov_count)
-
-                if self.multiPointController.abort_acqusition_requested:
-                    self.handle_acquisition_abort(current_path, region_id)
-                    return
-
-    def acquire_at_position(self, region_id, current_path, fov):
-
-        if RUN_CUSTOM_MULTIPOINT and "multipoint_custom_script_entry" in globals():
-            print("run custom multipoint")
-            multipoint_custom_script_entry(self, current_path, region_id, fov)
+    def _save_xml_config(self, objective: str, config_type: ConfigType) -> None:
+        """Save XML configuration for a specific config type"""
+        if objective not in self.all_configs[config_type]:
             return
 
-        if not self.perform_autofocus(region_id, fov):
-            self._log.error(
-                f"Autofocus failed in acquire_at_position.  Continuing to acquire anyway using the current z position (z={self.stage.get_pos().z_mm} [mm])"
-            )
+        config = self.all_configs[config_type][objective]
+        save_path = self.config_root / objective / f"{config_type.value}_configurations.xml"
 
-        if self.NZ > 1:
-            self.prepare_z_stack()
+        if not save_path.parent.exists():
+            save_path.parent.mkdir(parents=True)
 
-        pos = self.stage.get_pos()
-        if self.use_piezo:
-            self.z_piezo_um = self.piezo.position
+        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
+        save_path.write_bytes(xml_str)
 
-        for z_level in range(self.NZ):
-            file_ID = f"{region_id}_{fov:0{FILE_ID_PADDING}}_{z_level:0{FILE_ID_PADDING}}"
-
-            acquire_pos = self.stage.get_pos()
-            metadata = {"x": acquire_pos.x_mm, "y": acquire_pos.y_mm, "z": acquire_pos.z_mm}
-            self._log.info(f"Acquiring image: ID={file_ID}, Metadata={metadata}")
-
-            # laser af characterization mode
-            if self.do_reflection_af and self.microscope.laserAutofocusController.characterization_mode:
-                image = self.microscope.laserAutofocusController.get_image()
-                saving_path = os.path.join(current_path, file_ID + "_laser af camera" + ".bmp")
-                iio.imwrite(saving_path, image)
-
-            current_round_images = {}
-            # iterate through selected modes
-            for config_idx, config in enumerate(self.selected_configurations):
-
-                if self.NZ == 1:  # TODO: handle z offset for z stack
-                    self.handle_z_offset(config, True)
-
-                # acquire image
-                if "USB Spectrometer" not in config.name and "RGB" not in config.name:
-                    self.acquire_camera_image(config, file_ID, current_path, current_round_images, z_level)
-                elif "RGB" in config.name:
-                    self.acquire_rgb_image(config, file_ID, current_path, current_round_images, z_level)
-                else:
-                    self.acquire_spectrometer_data(config, file_ID, current_path, z_level)
-
-                if self.NZ == 1:  # TODO: handle z offset for z stack
-                    self.handle_z_offset(config, False)
-
-                current_image = (
-                    fov * self.NZ * len(self.selected_configurations)
-                    + z_level * len(self.selected_configurations)
-                    + config_idx
-                    + 1
-                )
-                self.signal_region_progress.emit(current_image, self.total_scans)
-
-            # updates coordinates df
-            self.update_coordinates_dataframe(region_id, z_level, fov)
-            self.signal_register_current_fov.emit(self.stage.get_pos().x_mm, self.stage.get_pos().y_mm)
-
-            # check if the acquisition should be aborted
-            if self.multiPointController.abort_acqusition_requested:
-                self.handle_acquisition_abort(current_path, region_id)
-                return
-
-            # update FOV counter
-            self.af_fov_count = self.af_fov_count + 1
-
-            if z_level < self.NZ - 1:
-                self.move_z_for_stack()
-
-        if self.NZ > 1:
-            self.move_z_back_after_stack()
-
-    def run_real_time_processing(self, current_round_images, z_level):
-        if (
-            "BF LED matrix left half" in current_round_images
-            and "BF LED matrix right half" in current_round_images
-            and "Fluorescence 405 nm Ex" in current_round_images
-        ):
-            try:
-                print("real time processing", self.count_rtp)
-                if (
-                    (self.microscope.model is None)
-                    or (self.microscope.device is None)
-                    or (self.microscope.classification_th is None)
-                    or (self.microscope.dataHandler is None)
-                ):
-                    raise AttributeError("microscope missing model, device, classification_th, and/or dataHandler")
-                I_fluorescence = current_round_images["Fluorescence 405 nm Ex"]
-                I_left = current_round_images["BF LED matrix left half"]
-                I_right = current_round_images["BF LED matrix right half"]
-                if len(I_left.shape) == 3:
-                    I_left = cv2.cvtColor(I_left, cv2.COLOR_RGB2GRAY)
-                if len(I_right.shape) == 3:
-                    I_right = cv2.cvtColor(I_right, cv2.COLOR_RGB2GRAY)
-                malaria_rtp(
-                    I_fluorescence,
-                    I_left,
-                    I_right,
-                    z_level,
-                    self,
-                    classification_test_mode=self.microscope.classification_test_mode,
-                    sort_during_multipoint=SORT_DURING_MULTIPOINT,
-                    disp_th_during_multipoint=DISP_TH_DURING_MULTIPOINT,
-                )
-                self.count_rtp += 1
-            except AttributeError as e:
-                print(repr(e))
-
-    def perform_autofocus(self, region_id, fov):
-        if not self.do_reflection_af:
-            # contrast-based AF; perform AF only if when not taking z stack or doing z stack from center
-            if (
-                ((self.NZ == 1) or self.z_stacking_config == "FROM CENTER")
-                and (self.do_autofocus)
-                and (self.af_fov_count % Acquisition.NUMBER_OF_FOVS_PER_AF == 0)
-            ):
-                configuration_name_AF = MULTIPOINT_AUTOFOCUS_CHANNEL
-                config_AF = self.channelConfigurationManager.get_channel_configuration_by_name(
-                    self.objectiveStore.current_objective, configuration_name_AF
-                )
-                self.signal_current_configuration.emit(config_AF)
-                if (
-                    self.af_fov_count % Acquisition.NUMBER_OF_FOVS_PER_AF == 0
-                ) or self.autofocusController.use_focus_map:
-                    self.autofocusController.autofocus()
-                    self.autofocusController.wait_till_autofocus_has_completed()
+    def save_configurations(self, objective: str) -> None:
+        """Save configurations based on spinning disk configuration"""
+        if ENABLE_SPINNING_DISK_CONFOCAL:
+            # Save both confocal and widefield configurations
+            self._save_xml_config(objective, ConfigType.CONFOCAL)
+            self._save_xml_config(objective, ConfigType.WIDEFIELD)
         else:
-            self._log.info("laser reflection af")
-            try:
-                if HAS_OBJECTIVE_PIEZO:  # when piezo is available, one move is sufficient as piezo is closed loop
-                    self.microscope.laserAutofocusController.move_to_target(0)
-                else:
-                    # TODO(imo): We used to have a case here to try to fix backlash by double commanding a position.  Now, just double command it whether or not we are using PID since we don't expose that now.  But in the future, backlash handing shouldb e done at a lower level (and we can remove the double here)
-                    self.microscope.laserAutofocusController.move_to_target(0)
-                    self.microscope.laserAutofocusController.move_to_target(
-                        0
-                    )  # for stepper in open loop mode, repeat the operation to counter backlash.  It's harmless if any other case.
-            except Exception as e:
-                file_ID = f"{region_id}_focus_camera.bmp"
-                saving_path = os.path.join(self.base_path, self.experiment_ID, str(self.time_point), file_ID)
-                iio.imwrite(saving_path, self.microscope.laserAutofocusController.image)
-                self._log.error(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! laser AF failed !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
-                    exc_info=e,
-                )
-                return False
-        return True
+            # Save only channel configurations
+            self._save_xml_config(objective, ConfigType.CHANNEL)
 
-    def prepare_z_stack(self):
-        # move to bottom of the z stack
-        if self.z_stacking_config == "FROM CENTER":
-            self.stage.move_z(-self.deltaZ * round((self.NZ - 1) / 2.0))
-            time.sleep(SCAN_STABILIZATION_TIME_MS_Z / 1000)
-        # TODO(imo): This is some sort of backlash compensation.  We should move this down to the low level, and remove it from here.
-        # maneuver for achiving uniform step size and repeatability when using open-loop control
-        distance_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-            max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-        )
-        self.stage.move_z(-distance_to_clear_backlash)
-        self.stage.move_z(distance_to_clear_backlash)
-        time.sleep(SCAN_STABILIZATION_TIME_MS_Z / 1000)
+    def save_current_configuration_to_path(self, objective: str, path: Path) -> None:
+        """Only used in TrackingController. Might be temporary."""
+        config = self.all_configs[self.active_config_type][objective]
+        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
+        path.write_bytes(xml_str)
 
-    def handle_z_offset(self, config, not_offset):
-        if config.z_offset is not None:  # perform z offset for config, assume z_offset is in um
-            if config.z_offset != 0.0:
-                direction = 1 if not_offset else -1
-                self._log.info("Moving Z offset" + str(config.z_offset * direction))
-                self.stage.move_z(config.z_offset / 1000 * direction)
-                self.wait_till_operation_is_completed()
-                time.sleep(SCAN_STABILIZATION_TIME_MS_Z / 1000)
+    def get_configurations(self, objective: str) -> List[ChannelMode]:
+        """Get channel modes for current active type"""
+        config = self.all_configs[self.active_config_type].get(objective)
+        if not config:
+            return []
+        return config.modes
 
-    def acquire_camera_image(self, config, file_ID, current_path, current_round_images, k):
-        # update the current configuration
-        if not self.performance_mode:
-            self.signal_current_configuration.emit(config)
-            self.wait_till_operation_is_completed()
-        else:
-            # set channel mode directly if in performance mode
-            self.liveController.set_microscope_mode(config)
-            self.wait_till_operation_is_completed()
-
-        # trigger acquisition (including turning on the illumination) and read frame
-        camera_illumination_time = self.camera.get_exposure_time()
-        if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
-            self.liveController.turn_on_illumination()
-            self.wait_till_operation_is_completed()
-            camera_illumination_time = None
-        elif self.liveController.trigger_mode == TriggerMode.HARDWARE:
-            if "Fluorescence" in config.name and ENABLE_NL5 and NL5_USE_DOUT:
-                # TODO(imo): This used to use the "reset_image_ready_flag=False" on the read_frame, but oinly the toupcam camera implementation had the
-                #  "reset_image_ready_flag" arg, so this is broken for all other cameras.  Also this used to do some other funky stuff like setting internal camera flags.
-                #   I am pretty sure this is broken!
-                self.microscope.nl5.start_acquisition()
-        while not self.camera.get_ready_for_trigger():
-            time.sleep(0.001)
-        self.camera.send_trigger(illumination_time=camera_illumination_time)
-        camera_frame = self.camera.read_camera_frame()
-        image = camera_frame.frame
-        if not camera_frame or image is None:
-            self._log.warning("self.camera.read_frame() returned None")
+    def update_configuration(self, objective: str, config_id: str, attr_name: str, value: Any) -> None:
+        """Update a specific configuration in current active type"""
+        config = self.all_configs[self.active_config_type].get(objective)
+        if not config:
+            self._log.error(f"Objective {objective} not found")
             return
 
-        # turn off the illumination if using software trigger
-        if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
-            self.liveController.turn_off_illumination()
+        for mode in config.modes:
+            if mode.id == config_id:
+                setattr(mode, utils_config.get_attr_name(attr_name), value)
+                break
 
-        # process the image -  @@@ to move to camera
-        image = utils.crop_image(image, self.crop_width, self.crop_height)
-        image_to_display = utils.crop_image(
-            image,
-            round(self.crop_width * self.display_resolution_scaling),
-            round(self.crop_height * self.display_resolution_scaling),
-        )
-        self.image_to_display.emit(image_to_display)
-        self.image_to_display_multi.emit(image_to_display, config.illumination_source)
+        self.save_configurations(objective)
 
-        self.save_image(image, file_ID, config, current_path, camera_frame.is_color())
-        self.update_napari(image, config.name, k)
+    def write_configuration_selected(
+        self, objective: str, selected_configurations: List[ChannelMode], filename: str
+    ) -> None:
+        """Write selected configurations to a file"""
+        config = self.all_configs[self.active_config_type].get(objective)
+        if not config:
+            raise ValueError(f"Objective {objective} not found")
 
-        current_round_images[config.name] = np.copy(image)
+        # Update selected status
+        for mode in config.modes:
+            mode.selected = any(conf.id == mode.id for conf in selected_configurations)
 
-        MultiPointWorker.handle_rgb_generation(current_round_images, file_ID, current_path, k)
+        # Save to specified file
+        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
+        filename = Path(filename)
+        filename.write_bytes(xml_str)
 
-        if not self.headless:
-            QApplication.processEvents()
+        # Reset selected status
+        for mode in config.modes:
+            mode.selected = False
+        self.save_configurations(objective)
 
-    def acquire_rgb_image(self, config, file_ID, current_path, current_round_images, k):
-        # go through the channels
-        rgb_channels = ["BF LED matrix full_R", "BF LED matrix full_G", "BF LED matrix full_B"]
-        images = {}
+    def get_channel_configurations_for_objective(self, objective: str) -> List[ChannelMode]:
+        """Get Configuration objects for current active type (alias for get_configurations)"""
+        return self.get_configurations(objective)
 
-        for config_ in self.channelConfigurationManager.get_channel_configurations_for_objective(
-            self.objectiveStore.current_objective
-        ):
-            if config_.name in rgb_channels:
-                # update the current configuration
-                if not self.performance_mode:
-                    self.signal_current_configuration.emit(config)
-                    self.wait_till_operation_is_completed()
-                else:
-                    # set channel mode directly if in performance mode
-                    self.liveController.set_microscope_mode(config)
-                    self.wait_till_operation_is_completed()
+    def get_channel_configuration_by_name(self, objective: str, name: str) -> ChannelMode:
+        """Get Configuration object by name"""
+        return next((mode for mode in self.get_configurations(objective) if mode.name == name), None)
 
-                # trigger acquisition (including turning on the illumination)
-                if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
-                    # TODO(imo): use illum controller
-                    self.liveController.turn_on_illumination()
-                    self.wait_till_operation_is_completed()
+    def toggle_confocal_widefield(self, confocal: bool) -> None:
+        """Toggle between confocal and widefield configurations"""
+        self.active_config_type = ConfigType.CONFOCAL if confocal else ConfigType.WIDEFIELD
 
-                # read camera frame
-                self.camera.send_trigger(illumination_time=self.camera.get_exposure_time())
-                image = self.camera.read_frame()
-                if image is None:
-                    print("self.camera.read_frame() returned None")
-                    continue
 
-                # TODO(imo): use illum controller
-                # turn off the illumination if using software trigger
-                if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
-                    self.liveController.turn_off_illumination()
+class ScanCoordinates(QObject):
 
-                # process the image  -  @@@ to move to camera
-                image = utils.crop_image(image, self.crop_width, self.crop_height)
+    signal_scan_coordinates_updated = Signal()
 
-                # add the image to dictionary
-                images[config_.name] = np.copy(image)
+    def __init__(self, objectiveStore, navigationViewer, stage: AbstractStage):
+        QObject.__init__(self)
+        self._log = squid.logging.get_logger(self.__class__.__name__)
+        # Wellplate settings
+        self.objectiveStore = objectiveStore
+        self.navigationViewer = navigationViewer
+        self.stage = stage
+        self.well_selector = None
+        self.acquisition_pattern = ACQUISITION_PATTERN
+        self.fov_pattern = FOV_PATTERN
+        self.format = WELLPLATE_FORMAT
+        self.a1_x_mm = A1_X_MM
+        self.a1_y_mm = A1_Y_MM
+        self.wellplate_offset_x_mm = WELLPLATE_OFFSET_X_mm
+        self.wellplate_offset_y_mm = WELLPLATE_OFFSET_Y_mm
+        self.well_spacing_mm = WELL_SPACING_MM
+        self.well_size_mm = WELL_SIZE_MM
+        self.a1_x_pixel = None
+        self.a1_y_pixel = None
+        self.number_of_skip = None
 
-        # Check if the image is RGB or monochrome
-        i_size = images["BF LED matrix full_R"].shape
+        # Centralized region management
+        self.region_centers = {}  # {region_id: [x, y, z]}
+        self.region_shapes = {}  # {region_id: "Square"}
+        self.region_fov_coordinates = {}  # {region_id: [(x,y,z), ...]}
 
-        if len(i_size) == 3:
-            # If already RGB, write and emit individual channels
-            print("writing R, G, B channels")
-            self.handle_rgb_channels(images, file_ID, current_path, config, k)
-        else:
-            # If monochrome, reconstruct RGB image
-            print("constructing RGB image")
-            self.construct_rgb_image(images, file_ID, current_path, config, k)
+    def add_well_selector(self, well_selector):
+        self.well_selector = well_selector
 
-    def acquire_spectrometer_data(self, config, file_ID, current_path):
-        if self.usb_spectrometer is not None:
-            for l in range(N_SPECTRUM_PER_POINT):
-                data = self.usb_spectrometer.read_spectrum()
-                self.spectrum_to_display.emit(data)
-                saving_path = os.path.join(
-                    current_path, file_ID + "_" + str(config.name).replace(" ", "_") + "_" + str(l) + ".csv"
-                )
-                np.savetxt(saving_path, data, delimiter=",")
+    def update_wellplate_settings(
+        self, format_, a1_x_mm, a1_y_mm, a1_x_pixel, a1_y_pixel, size_mm, spacing_mm, number_of_skip
+    ):
+        self.format = format_
+        self.a1_x_mm = a1_x_mm
+        self.a1_y_mm = a1_y_mm
+        self.a1_x_pixel = a1_x_pixel
+        self.a1_y_pixel = a1_y_pixel
+        self.well_size_mm = size_mm
+        self.well_spacing_mm = spacing_mm
+        self.number_of_skip = number_of_skip
 
-    def save_image(self, image: np.array, file_ID: str, config: ChannelMode, current_path: str, is_color: bool):
-        saved_image = utils_acquisition.save_image(
-            image=image, file_id=file_ID, save_directory=current_path, config=config, is_color=is_color
-        )
+    def _index_to_row(self, index):
+        index += 1
+        row = ""
+        while index > 0:
+            index -= 1
+            row = chr(index % 26 + ord("A")) + row
+            index //= 26
+        return row
 
-        if MERGE_CHANNELS:
-            self._save_merged_image(saved_image, file_ID, current_path)
+    def get_selected_wells(self):
+        # get selected wells from the widget
+        self._log.info("getting selected wells for acquisition")
+        if not self.well_selector or self.format == "glass slide":
+            return None
 
-    def _save_merged_image(self, image: np.array, file_ID: str, current_path: str):
-        self.image_count += 1
+        selected_wells = np.array(self.well_selector.get_selected_cells())
+        well_centers = {}
 
-        if self.image_count == 1:
-            self.merged_image = image
-        else:
-            self.merged_image = np.maximum(self.merged_image, image)
+        # if no well selected
+        if len(selected_wells) == 0:
+            return well_centers
+        # populate the coordinates
+        rows = np.unique(selected_wells[:, 0])
+        _increasing = True
+        for row in rows:
+            items = selected_wells[selected_wells[:, 0] == row]
+            columns = items[:, 1]
+            columns = np.sort(columns)
+            if _increasing == False:
+                columns = np.flip(columns)
+            for column in columns:
+                x_mm = self.a1_x_mm + (column * self.well_spacing_mm) + self.wellplate_offset_x_mm
+                y_mm = self.a1_y_mm + (row * self.well_spacing_mm) + self.wellplate_offset_y_mm
+                well_id = self._index_to_row(row) + str(column + 1)
+                well_centers[well_id] = (x_mm, y_mm)
+            _increasing = not _increasing
+        return well_centers
 
-            if self.image_count == len(self.selected_configurations):
-                if image.dtype == np.uint16:
-                    saving_path = os.path.join(current_path, file_ID + "_merged" + ".tiff")
-                else:
-                    saving_path = os.path.join(current_path, file_ID + "_merged" + "." + Acquisition.IMAGE_FORMAT)
+    def set_live_scan_coordinates(self, x_mm, y_mm, scan_size_mm, overlap_percent, shape):
+        if shape != "Manual" and self.format == "glass slide":
+            if self.region_centers:
+                self.clear_regions()
+            self.add_region("current", x_mm, y_mm, scan_size_mm, overlap_percent, shape)
 
-                iio.imwrite(saving_path, self.merged_image)
-                self.image_count = 0
+    def set_well_coordinates(self, scan_size_mm, overlap_percent, shape):
+        new_region_centers = self.get_selected_wells()
 
-        return
-
-    def update_napari(self, image, config_name, k):
-        if not self.performance_mode and (USE_NAPARI_FOR_MOSAIC_DISPLAY or USE_NAPARI_FOR_MULTIPOINT):
-
-            if not self.init_napari_layers:
-                print("init napari layers")
-                self.init_napari_layers = True
-                self.napari_layers_init.emit(image.shape[0], image.shape[1], image.dtype)
+        if self.format == "glass slide":
             pos = self.stage.get_pos()
-            objective_magnification = str(int(self.objectiveStore.get_current_objective_info()["magnification"]))
-            self.napari_layers_update.emit(image, pos.x_mm, pos.y_mm, k, objective_magnification + "x " + config_name)
+            self.set_live_scan_coordinates(pos.x_mm, pos.y_mm, scan_size_mm, overlap_percent, shape)
 
-    @staticmethod
-    def handle_rgb_generation(current_round_images, file_ID, current_path, k):
-        keys_to_check = ["BF LED matrix full_R", "BF LED matrix full_G", "BF LED matrix full_B"]
-        if all(key in current_round_images for key in keys_to_check):
-            print("constructing RGB image")
-            print(current_round_images["BF LED matrix full_R"].dtype)
-            size = current_round_images["BF LED matrix full_R"].shape
-            rgb_image = np.zeros((*size, 3), dtype=current_round_images["BF LED matrix full_R"].dtype)
-            print(rgb_image.shape)
-            rgb_image[:, :, 0] = current_round_images["BF LED matrix full_R"]
-            rgb_image[:, :, 1] = current_round_images["BF LED matrix full_G"]
-            rgb_image[:, :, 2] = current_round_images["BF LED matrix full_B"]
+        elif bool(new_region_centers):
+            # Remove regions that are no longer selected
+            for well_id in list(self.region_centers.keys()):
+                if well_id not in new_region_centers.keys():
+                    self.remove_region(well_id)
 
-            # TODO(imo): There used to be a "display image" comment here, and then an unused cropped image.  Do we need to emit an image here?
+            # Add regions for selected wells
+            for well_id, (x, y) in new_region_centers.items():
+                if well_id not in self.region_centers:
+                    self.add_region(well_id, x, y, scan_size_mm, overlap_percent, shape)
+        else:
+            self.clear_regions()
 
-            # write the image
-            if len(rgb_image.shape) == 3:
-                print("writing RGB image")
-                if rgb_image.dtype == np.uint16:
-                    iio.imwrite(os.path.join(current_path, file_ID + "_BF_LED_matrix_full_RGB.tiff"), rgb_image)
-                else:
-                    iio.imwrite(
-                        os.path.join(current_path, file_ID + "_BF_LED_matrix_full_RGB." + Acquisition.IMAGE_FORMAT),
-                        rgb_image,
+    def set_manual_coordinates(self, manual_shapes, overlap_percent):
+        self.clear_regions()
+        if manual_shapes is not None:
+            # Handle manual ROIs
+            manual_region_added = False
+            for i, shape_coords in enumerate(manual_shapes):
+                scan_coordinates = self.add_manual_region(shape_coords, overlap_percent)
+                if scan_coordinates:
+                    if len(manual_shapes) <= 1:
+                        region_name = f"manual"
+                    else:
+                        region_name = f"manual{i}"
+                    center = np.mean(shape_coords, axis=0)
+                    self.region_centers[region_name] = [center[0], center[1]]
+                    self.region_shapes[region_name] = "Manual"
+                    self.region_fov_coordinates[region_name] = scan_coordinates
+                    manual_region_added = True
+                    self._log.info(f"Added Manual Region: {region_name}")
+            if manual_region_added:
+                self.signal_scan_coordinates_updated.emit()
+        else:
+            self._log.info("No Manual ROI found")
+
+    def add_region(self, well_id, center_x, center_y, scan_size_mm, overlap_percent=10, shape="Square"):
+        """add region based on user inputs"""
+        pixel_size_um = self.objectiveStore.get_pixel_size()
+        fov_size_mm = (pixel_size_um / 1000) * Acquisition.CROP_WIDTH
+        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
+        scan_coordinates = []
+
+        if shape == "Rectangle":
+            # Use scan_size_mm as height, width is 0.6 * height
+            height_mm = scan_size_mm
+            width_mm = scan_size_mm * 0.6
+
+            # Calculate steps for height and width separately
+            steps_height = math.floor(height_mm / step_size_mm)
+            steps_width = math.floor(width_mm / step_size_mm)
+
+            # Calculate actual dimensions
+            actual_scan_height_mm = (steps_height - 1) * step_size_mm + fov_size_mm
+            actual_scan_width_mm = (steps_width - 1) * step_size_mm + fov_size_mm
+
+            steps_height = max(1, steps_height)
+            steps_width = max(1, steps_width)
+
+            half_steps_height = (steps_height - 1) / 2
+            half_steps_width = (steps_width - 1) / 2
+
+            for i in range(steps_height):
+                row = []
+                y = center_y + (i - half_steps_height) * step_size_mm
+                for j in range(steps_width):
+                    x = center_x + (j - half_steps_width) * step_size_mm
+                    if self.validate_coordinates(x, y):
+                        row.append((x, y))
+                        self.navigationViewer.register_fov_to_image(x, y)
+                if self.fov_pattern == "S-Pattern" and i % 2 == 1:
+                    row.reverse()
+                scan_coordinates.extend(row)
+        else:
+            steps = math.floor(scan_size_mm / step_size_mm)
+            if shape == "Circle":
+                tile_diagonal = math.sqrt(2) * fov_size_mm
+                if steps % 2 == 1:  # for odd steps
+                    actual_scan_size_mm = (steps - 1) * step_size_mm + tile_diagonal
+                else:  # for even steps
+                    actual_scan_size_mm = math.sqrt(
+                        ((steps - 1) * step_size_mm + fov_size_mm) ** 2 + (step_size_mm + fov_size_mm) ** 2
                     )
 
-    def handle_rgb_channels(self, images, file_ID, current_path, config, k):
-        for channel in ["BF LED matrix full_R", "BF LED matrix full_G", "BF LED matrix full_B"]:
-            image_to_display = utils.crop_image(
-                images[channel],
-                round(self.crop_width * self.display_resolution_scaling),
-                round(self.crop_height * self.display_resolution_scaling),
-            )
-            self.image_to_display.emit(image_to_display)
-            self.image_to_display_multi.emit(image_to_display, config.illumination_source)
-
-            self.update_napari(images[channel], channel, k)
-
-            file_name = (
-                file_ID
-                + "_"
-                + channel.replace(" ", "_")
-                + (".tiff" if images[channel].dtype == np.uint16 else "." + Acquisition.IMAGE_FORMAT)
-            )
-            iio.imwrite(os.path.join(current_path, file_name), images[channel])
-
-    def construct_rgb_image(self, images, file_ID, current_path, config, k):
-        rgb_image = np.zeros((*images["BF LED matrix full_R"].shape, 3), dtype=images["BF LED matrix full_R"].dtype)
-        rgb_image[:, :, 0] = images["BF LED matrix full_R"]
-        rgb_image[:, :, 1] = images["BF LED matrix full_G"]
-        rgb_image[:, :, 2] = images["BF LED matrix full_B"]
-
-        # send image to display
-        image_to_display = utils.crop_image(
-            rgb_image,
-            round(self.crop_width * self.display_resolution_scaling),
-            round(self.crop_height * self.display_resolution_scaling),
-        )
-        self.image_to_display.emit(image_to_display)
-        self.image_to_display_multi.emit(image_to_display, config.illumination_source)
-
-        self.update_napari(rgb_image, config.name, k)
-
-        # write the RGB image
-        print("writing RGB image")
-        file_name = (
-            file_ID
-            + "_BF_LED_matrix_full_RGB"
-            + (".tiff" if rgb_image.dtype == np.uint16 else "." + Acquisition.IMAGE_FORMAT)
-        )
-        iio.imwrite(os.path.join(current_path, file_name), rgb_image)
-
-    def handle_acquisition_abort(self, current_path, region_id=0):
-        # Move to the current region center
-        region_center = self.scan_region_coords_mm[self.scan_region_names.index(region_id)]
-        self.move_to_coordinate(region_center)
-
-        # Save coordinates.csv
-        self.coordinates_pd.to_csv(os.path.join(current_path, "coordinates.csv"), index=False, header=True)
-        self.microcontroller.enable_joystick(True)
-
-    def move_z_for_stack(self):
-        if self.use_piezo:
-            self.z_piezo_um += self.deltaZ * 1000
-            self.piezo.move_to(self.z_piezo_um)
-            if (
-                self.liveController.trigger_mode == TriggerMode.SOFTWARE
-            ):  # for hardware trigger, delay is in waiting for the last row to start exposure
-                time.sleep(MULTIPOINT_PIEZO_DELAY_MS / 1000)
-            if MULTIPOINT_PIEZO_UPDATE_DISPLAY:
-                self.signal_z_piezo_um.emit(self.z_piezo_um)
-        else:
-            self.stage.move_z(self.deltaZ)
-            time.sleep(SCAN_STABILIZATION_TIME_MS_Z / 1000)
-
-    def move_z_back_after_stack(self):
-        if self.use_piezo:
-            self.z_piezo_um = self.z_piezo_um - self.deltaZ * 1000 * (self.NZ - 1)
-            self.piezo.move_to(self.z_piezo_um)
-            if (
-                self.liveController.trigger_mode == TriggerMode.SOFTWARE
-            ):  # for hardware trigger, delay is in waiting for the last row to start exposure
-                time.sleep(MULTIPOINT_PIEZO_DELAY_MS / 1000)
-            if MULTIPOINT_PIEZO_UPDATE_DISPLAY:
-                self.signal_z_piezo_um.emit(self.z_piezo_um)
-        else:
-            distance_to_clear_backlash = self.stage.get_config().Z_AXIS.convert_to_real_units(
-                max(160, 20 * self.stage.get_config().Z_AXIS.MICROSTEPS_PER_STEP)
-            )
-            if self.z_stacking_config == "FROM CENTER":
-                rel_z_to_start = -self.deltaZ * (self.NZ - 1) + self.deltaZ * round((self.NZ - 1) / 2)
+                if actual_scan_size_mm > scan_size_mm:
+                    actual_scan_size_mm -= step_size_mm
+                    steps -= 1
             else:
-                rel_z_to_start = -self.deltaZ * (self.NZ - 1)
+                actual_scan_size_mm = (steps - 1) * step_size_mm + fov_size_mm
 
-            # TODO(imo): backlash should be handled at a lower level.  For now, we do it here no matter what control scheme is being used below.
-            self.stage.move_z(rel_z_to_start - distance_to_clear_backlash)
-            self.stage.move_z(distance_to_clear_backlash)
+            steps = max(1, steps)  # Ensure at least one step
+            # print("steps:", steps)
+            # print("scan size mm:", scan_size_mm)
+            # print("actual scan size mm:", actual_scan_size_mm)
+            half_steps = (steps - 1) / 2
+            radius_squared = (scan_size_mm / 2) ** 2
+            fov_size_mm_half = fov_size_mm / 2
+
+            for i in range(steps):
+                row = []
+                y = center_y + (i - half_steps) * step_size_mm
+                for j in range(steps):
+                    x = center_x + (j - half_steps) * step_size_mm
+                    if (
+                        shape == "Square"
+                        or shape == "Rectangle"
+                        or (
+                            shape == "Circle"
+                            and self._is_in_circle(x, y, center_x, center_y, radius_squared, fov_size_mm_half)
+                        )
+                    ):
+                        if self.validate_coordinates(x, y):
+                            row.append((x, y))
+                            self.navigationViewer.register_fov_to_image(x, y)
+
+                if self.fov_pattern == "S-Pattern" and i % 2 == 1:
+                    row.reverse()
+                scan_coordinates.extend(row)
+
+        if not scan_coordinates and shape == "Circle":
+            if self.validate_coordinates(center_x, center_y):
+                scan_coordinates.append((center_x, center_y))
+                self.navigationViewer.register_fov_to_image(center_x, center_y)
+
+        self.region_shapes[well_id] = shape
+        self.region_centers[well_id] = [float(center_x), float(center_y), float(self.stage.get_pos().z_mm)]
+        self.region_fov_coordinates[well_id] = scan_coordinates
+        self.signal_scan_coordinates_updated.emit()
+        self._log.info(f"Added Region: {well_id}")
+
+    def remove_region(self, well_id):
+        if well_id in self.region_centers:
+            del self.region_centers[well_id]
+
+            if well_id in self.region_shapes:
+                del self.region_shapes[well_id]
+
+            if well_id in self.region_fov_coordinates:
+                region_scan_coordinates = self.region_fov_coordinates.pop(well_id)
+                for coord in region_scan_coordinates:
+                    self.navigationViewer.deregister_fov_to_image(coord[0], coord[1])
+
+            self._log.info(f"Removed Region: {well_id}")
+            self.signal_scan_coordinates_updated.emit()
+
+    def clear_regions(self):
+        self.region_centers.clear()
+        self.region_shapes.clear()
+        self.region_fov_coordinates.clear()
+        self.navigationViewer.clear_overlay()
+        self.signal_scan_coordinates_updated.emit()
+        self._log.info("Cleared All Regions")
+
+    def add_flexible_region(self, region_id, center_x, center_y, center_z, Nx, Ny, overlap_percent=10):
+        """Convert grid parameters NX, NY to FOV coordinates based on overlap"""
+        fov_size_mm = (self.objectiveStore.get_pixel_size() / 1000) * Acquisition.CROP_WIDTH
+        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
+
+        # Calculate total grid size
+        grid_width_mm = (Nx - 1) * step_size_mm
+        grid_height_mm = (Ny - 1) * step_size_mm
+
+        scan_coordinates = []
+        for i in range(Ny):
+            row = []
+            y = center_y - grid_height_mm / 2 + i * step_size_mm
+            for j in range(Nx):
+                x = center_x - grid_width_mm / 2 + j * step_size_mm
+                if self.validate_coordinates(x, y):
+                    row.append((x, y))
+                    self.navigationViewer.register_fov_to_image(x, y)
+
+            if self.fov_pattern == "S-Pattern" and i % 2 == 1:  # reverse even rows
+                row.reverse()
+            scan_coordinates.extend(row)
+
+        # Region coordinates are already centered since center_x, center_y is grid center
+        if scan_coordinates:  # Only add region if there are valid coordinates
+            self._log.info(f"Added Flexible Region: {region_id}")
+            self.region_centers[region_id] = [center_x, center_y, center_z]
+            self.region_fov_coordinates[region_id] = scan_coordinates
+            self.signal_scan_coordinates_updated.emit()
+        else:
+            self._log.info(f"Region Out of Bounds: {region_id}")
+
+    def add_flexible_region_with_step_size(self, region_id, center_x, center_y, center_z, Nx, Ny, dx, dy):
+        """Convert grid parameters NX, NY to FOV coordinates based on dx, dy"""
+        grid_width_mm = (Nx - 1) * dx
+        grid_height_mm = (Ny - 1) * dy
+
+        # Pre-calculate step sizes and ranges
+        x_steps = [center_x - grid_width_mm / 2 + j * dx for j in range(Nx)]
+        y_steps = [center_y - grid_height_mm / 2 + i * dy for i in range(Ny)]
+
+        scan_coordinates = []
+        for i, y in enumerate(y_steps):
+            row = []
+            x_range = x_steps if i % 2 == 0 else reversed(x_steps)
+            for x in x_range:
+                if self.validate_coordinates(x, y):
+                    row.append((x, y))
+                    self.navigationViewer.register_fov_to_image(x, y)
+            scan_coordinates.extend(row)
+
+        if scan_coordinates:  # Only add region if there are valid coordinates
+            self._log.info(f"Added Flexible Region: {region_id}")
+            self.region_centers[region_id] = [center_x, center_y, center_z]
+            self.region_fov_coordinates[region_id] = scan_coordinates
+            self.signal_scan_coordinates_updated.emit()
+        else:
+            print(f"Region Out of Bounds: {region_id}")
+
+    def add_manual_region(self, shape_coords, overlap_percent):
+        """Add region from manually drawn polygon shape"""
+        if shape_coords is None or len(shape_coords) < 3:
+            self._log.error("Invalid manual ROI data")
+            return []
+
+        pixel_size_um = self.objectiveStore.get_pixel_size()
+        fov_size_mm = (pixel_size_um / 1000) * Acquisition.CROP_WIDTH
+        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
+
+        # Ensure shape_coords is a numpy array
+        shape_coords = np.array(shape_coords)
+        if shape_coords.ndim == 1:
+            shape_coords = shape_coords.reshape(-1, 2)
+        elif shape_coords.ndim > 2:
+            self._log.error(f"Unexpected shape of manual_shape: {shape_coords.shape}")
+            return []
+
+        # Calculate bounding box
+        x_min, y_min = np.min(shape_coords, axis=0)
+        x_max, y_max = np.max(shape_coords, axis=0)
+
+        # Create a grid of points within the bounding box
+        x_range = np.arange(x_min, x_max + step_size_mm, step_size_mm)
+        y_range = np.arange(y_min, y_max + step_size_mm, step_size_mm)
+        xx, yy = np.meshgrid(x_range, y_range)
+        grid_points = np.column_stack((xx.ravel(), yy.ravel()))
+
+        # # Use Delaunay triangulation for efficient point-in-polygon test
+        # # hull = Delaunay(shape_coords)
+        # # mask = hull.find_simplex(grid_points) >= 0
+        # # or
+        # # Use Ray Casting for point-in-polygon test
+        # mask = np.array([self._is_in_polygon(x, y, shape_coords) for x, y in grid_points])
+
+        # # Filter points inside the polygon
+        # valid_points = grid_points[mask]
+
+        def corners(x_mm, y_mm, fov):
+            center_to_corner = fov / 2
+            return (
+                (x_mm + center_to_corner, y_mm + center_to_corner),
+                (x_mm - center_to_corner, y_mm + center_to_corner),
+                (x_mm - center_to_corner, y_mm - center_to_corner),
+                (x_mm + center_to_corner, y_mm - center_to_corner),
+            )
+
+        valid_points = []
+        for x_center, y_center in grid_points:
+            if not self.validate_coordinates(x_center, y_center):
+                self._log.debug(
+                    f"Manual coords: ignoring {x_center=},{y_center=} because it is outside our movement range."
+                )
+                continue
+            if not self._is_in_polygon(x_center, y_center, shape_coords) and not any(
+                [
+                    self._is_in_polygon(x_corner, y_corner, shape_coords)
+                    for (x_corner, y_corner) in corners(x_center, y_center, fov_size_mm)
+                ]
+            ):
+                self._log.debug(
+                    f"Manual coords: ignoring {x_center=},{y_center=} because no corners or center are in poly. (corners={corners(x_center, y_center, fov_size_mm)}"
+                )
+                continue
+
+            valid_points.append((x_center, y_center))
+        if not valid_points:
+            return []
+        valid_points = np.array(valid_points)
+
+        # Sort points
+        sorted_indices = np.lexsort((valid_points[:, 0], valid_points[:, 1]))
+        sorted_points = valid_points[sorted_indices]
+
+        # Apply S-Pattern if needed
+        if self.fov_pattern == "S-Pattern":
+            unique_y = np.unique(sorted_points[:, 1])
+            for i in range(1, len(unique_y), 2):
+                mask = sorted_points[:, 1] == unique_y[i]
+                sorted_points[mask] = sorted_points[mask][::-1]
+
+        # Register FOVs
+        for x, y in sorted_points:
+            self.navigationViewer.register_fov_to_image(x, y)
+
+        return sorted_points.tolist()
+
+    def add_template_region(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        template_x_mm: np.ndarray,
+        template_y_mm: np.ndarray,
+        region_id: str,
+    ):
+        """Add a region based on a template of x and y coordinates"""
+        scan_coordinates = []
+        for i in range(len(template_x_mm)):
+            x = x_mm + template_x_mm[i]
+            y = y_mm + template_y_mm[i]
+            if self.validate_coordinates(x, y):
+                scan_coordinates.append((x, y))
+                self.navigationViewer.register_fov_to_image(x, y)
+        self.region_centers[region_id] = [x_mm, y_mm, z_mm]
+        self.region_fov_coordinates[region_id] = scan_coordinates
+
+    def region_contains_coordinate(self, region_id: str, x: float, y: float) -> bool:
+        # TODO: check for manual region
+        if not self.validate_region(region_id):
+            return False
+
+        bounds = self.get_region_bounds(region_id)
+        shape = self.get_region_shape(region_id)
+
+        # For square regions
+        if not (bounds["min_x"] <= x <= bounds["max_x"] and bounds["min_y"] <= y <= bounds["max_y"]):
+            return False
+
+        # For circle regions
+        if shape == "Circle":
+            center_x = (bounds["max_x"] + bounds["min_x"]) / 2
+            center_y = (bounds["max_y"] + bounds["min_y"]) / 2
+            radius = (bounds["max_x"] - bounds["min_x"]) / 2
+            if (x - center_x) ** 2 + (y - center_y) ** 2 > radius**2:
+                return False
+
+        return True
+
+    def _is_in_polygon(self, x, y, poly):
+        n = len(poly)
+        inside = False
+        p1x, p1y = poly[0]
+        for i in range(n + 1):
+            p2x, p2y = poly[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
+
+    def _is_in_circle(self, x, y, center_x, center_y, radius_squared, fov_size_mm_half):
+        corners = [
+            (x - fov_size_mm_half, y - fov_size_mm_half),
+            (x + fov_size_mm_half, y - fov_size_mm_half),
+            (x - fov_size_mm_half, y + fov_size_mm_half),
+            (x + fov_size_mm_half, y + fov_size_mm_half),
+        ]
+        return all((cx - center_x) ** 2 + (cy - center_y) ** 2 <= radius_squared for cx, cy in corners)
+
+    def has_regions(self):
+        """Check if any regions exist"""
+        return len(self.region_centers) > 0
+
+    def validate_region(self, region_id):
+        """Validate a region exists"""
+        return region_id in self.region_centers and region_id in self.region_fov_coordinates
+
+    def validate_coordinates(self, x, y):
+        return (
+            SOFTWARE_POS_LIMIT.X_NEGATIVE <= x <= SOFTWARE_POS_LIMIT.X_POSITIVE
+            and SOFTWARE_POS_LIMIT.Y_NEGATIVE <= y <= SOFTWARE_POS_LIMIT.Y_POSITIVE
+        )
+
+    def sort_coordinates(self):
+        self._log.info(f"Acquisition pattern: {self.acquisition_pattern}")
+
+        if len(self.region_centers) <= 1:
+            return
+
+        def sort_key(item):
+            key, coord = item
+            if "manual" in key:
+                return (0, coord[1], coord[0])  # Manual coords: sort by y, then x
+            else:
+                letters = "".join(c for c in key if c.isalpha())
+                numbers = "".join(c for c in key if c.isdigit())
+
+                letter_value = 0
+                for i, letter in enumerate(reversed(letters)):
+                    letter_value += (ord(letter) - ord("A")) * (26**i)
+
+                return (1, letter_value, int(numbers))  # Well coords: sort by letter value, then number
+
+        sorted_items = sorted(self.region_centers.items(), key=sort_key)
+
+        if self.acquisition_pattern == "S-Pattern":
+            # Group by row and reverse alternate rows
+            rows = itertools.groupby(sorted_items, key=lambda x: x[1][1] if "manual" in x[0] else x[0][0])
+            sorted_items = []
+            for i, (_, group) in enumerate(rows):
+                row = list(group)
+                if i % 2 == 1:
+                    row.reverse()
+                sorted_items.extend(row)
+
+        # Update dictionaries efficiently
+        self.region_centers = {k: v for k, v in sorted_items}
+        self.region_fov_coordinates = {
+            k: self.region_fov_coordinates[k] for k, _ in sorted_items if k in self.region_fov_coordinates
+        }
+
+    def get_region_bounds(self, region_id):
+        """Get region boundaries"""
+        if not self.validate_region(region_id):
+            return None
+        fovs = np.array(self.region_fov_coordinates[region_id])
+        return {
+            "min_x": np.min(fovs[:, 0]),
+            "max_x": np.max(fovs[:, 0]),
+            "min_y": np.min(fovs[:, 1]),
+            "max_y": np.max(fovs[:, 1]),
+        }
+
+    def get_region_shape(self, region_id):
+        if not self.validate_region(region_id):
+            return None
+        return self.region_shapes[region_id]
+
+    def get_scan_bounds(self):
+        """Get bounds of all scan regions with margin"""
+        if not self.has_regions():
+            return None
+
+        min_x = float("inf")
+        max_x = float("-inf")
+        min_y = float("inf")
+        max_y = float("-inf")
+
+        # Find global bounds across all regions
+        for region_id in self.region_fov_coordinates.keys():
+            bounds = self.get_region_bounds(region_id)
+            if bounds:
+                min_x = min(min_x, bounds["min_x"])
+                max_x = max(max_x, bounds["max_x"])
+                min_y = min(min_y, bounds["min_y"])
+                max_y = max(max_y, bounds["max_y"])
+
+        if min_x == float("inf"):
+            return None
+
+        # Add margin around bounds (5% of larger dimension)
+        width = max_x - min_x
+        height = max_y - min_y
+        margin = max(width, height) * 0.00  # 0.05
+
+        return {"x": (min_x - margin, max_x + margin), "y": (min_y - margin, max_y + margin)}
+
+    def update_fov_z_level(self, region_id, fov, new_z):
+        """Update z-level for a specific FOV and its region center"""
+        if not self.validate_region(region_id):
+            print(f"Region {region_id} not found")
+            return
+
+        # Update FOV coordinates
+        fov_coords = self.region_fov_coordinates[region_id]
+        if fov < len(fov_coords):
+            # Handle both (x,y) and (x,y,z) cases
+            x, y = fov_coords[fov][:2]  # Takes first two elements regardless of length
+            self.region_fov_coordinates[region_id][fov] = (x, y, new_z)
+
+        # If first FOV, update region center coordinates
+        if fov == 0:
+            if len(self.region_centers[region_id]) == 3:
+                self.region_centers[region_id][2] = new_z
+            else:
+                self.region_centers[region_id].append(new_z)
+
+        self._log.info(f"Updated z-level to {new_z} for region:{region_id}, fov:{fov}")
 
 
 class MultiPointController(QObject):
 
-    acquisitionFinished = Signal()
+    acquisition_finished = Signal()
     image_to_display = Signal(np.ndarray)
     image_to_display_multi = Signal(np.ndarray, int)
     spectrum_to_display = Signal(np.ndarray)
     signal_current_configuration = Signal(ChannelMode)
     signal_register_current_fov = Signal(float, float)
-    detection_stats = Signal(object)
     signal_stitcher = Signal(str)
-    napari_rtp_layers_update = Signal(np.ndarray, str)
     napari_layers_init = Signal(int, int, object)
     napari_layers_update = Signal(np.ndarray, float, float, int, str)  # image, x_mm, y_mm, k, channel
     signal_set_display_tabs = Signal(list, int)
@@ -2052,12 +1956,12 @@ class MultiPointController(QObject):
         stage: AbstractStage,
         piezo: Optional[PiezoStage],
         microcontroller: Microcontroller,
-        liveController,
-        autofocusController,
-        objectiveStore,
-        channelConfigurationManager,
+        live_controller: LiveController,
+        autofocus_controller: AutoFocusController,
+        objective_store: ObjectiveStore,
+        channel_configuration_manager: ChannelConfigurationManager,
         usb_spectrometer=None,
-        scanCoordinates=None,
+        scan_coordinates: Optional[ScanCoordinates] = None,
         fluidics=None,
         parent=None,
         headless=False,
@@ -2065,15 +1969,13 @@ class MultiPointController(QObject):
         QObject.__init__(self)
         self._log = squid.logging.get_logger(self.__class__.__name__)
         self.camera: AbstractCamera = camera
-        if DO_FLUORESCENCE_RTP:
-            self.processingHandler = ProcessingHandler()
-        self.stage = stage
-        self.piezo = piezo
-        self.microcontroller = microcontroller
-        self.liveController = liveController
-        self.autofocusController = autofocusController
-        self.objectiveStore = objectiveStore
-        self.channelConfigurationManager = channelConfigurationManager
+        self.stage: AbstractStage = stage
+        self.piezo: Optional[PiezoStage] = piezo
+        self.microcontroller: Microcontroller = microcontroller
+        self.liveController: LiveController = live_controller
+        self.autofocusController: AutoFocusController = autofocus_controller
+        self.objectiveStore: ObjectiveStore = objective_store
+        self.channelConfigurationManager: ChannelConfigurationManager = channel_configuration_manager
         self.multiPointWorker: Optional[MultiPointWorker] = None
         self.thread: Optional[QThread] = None
         self.NX = 1
@@ -2093,7 +1995,6 @@ class MultiPointController(QObject):
         self.focus_map_storage = []
         self.already_using_fmap = False
         self.do_segmentation = False
-        self.do_fluorescence_rtp = DO_FLUORESCENCE_RTP
         self.crop_width = Acquisition.CROP_WIDTH
         self.crop_height = Acquisition.CROP_HEIGHT
         self.display_resolution_scaling = Acquisition.IMAGE_DISPLAY_SCALING_FACTOR
@@ -2103,7 +2004,7 @@ class MultiPointController(QObject):
         self.use_piezo = MULTIPOINT_USE_PIEZO_FOR_ZSTACKS
         self.selected_configurations = []
         self.usb_spectrometer = usb_spectrometer
-        self.scanCoordinates = scanCoordinates
+        self.scanCoordinates = scan_coordinates
         self.scan_region_names = []
         self.scan_region_coords_mm = []
         self.scan_region_fov_coords_mm = {}
@@ -2116,11 +2017,6 @@ class MultiPointController(QObject):
         self.fluidics = fluidics
 
         self.headless = headless
-        try:
-            if self.parent is not None:
-                self.old_images_per_page = self.parent.dataHandler.n_images_per_page
-        except:
-            pass
         self.z_stacking_config = Z_STACKING_CONFIG
 
     def acquisition_in_progress(self):
@@ -2181,14 +2077,8 @@ class MultiPointController(QObject):
         if not flag:
             self.autofocusController.set_focus_map_use(False)
 
-    def set_stitch_tiles_flag(self, flag):
-        self.do_stitch_tiles = flag
-
     def set_segmentation_flag(self, flag):
         self.do_segmentation = flag
-
-    def set_fluorescence_rtp_flag(self, flag):
-        self.do_fluorescence_rtp = flag
 
     def set_focus_map(self, focusMap):
         self.focus_map = focusMap  # None if dont use focusMap
@@ -2362,7 +2252,7 @@ class MultiPointController(QObject):
     def run_acquisition(self):
         if not self.validate_acquisition_settings():
             # emit acquisition finished signal to re-enable the UI
-            self.acquisitionFinished.emit()
+            self.acquisition_finished.emit()
             return
 
         self._log.info("start multipoint")
@@ -2424,7 +2314,7 @@ class MultiPointController(QObject):
                 # Convert each tuple to list for modification
                 for i, coords in enumerate(region_fov_coords):
                     x, y = coords[:2]  # This handles both (x,y) and (x,y,z) formats
-                    z = self.focus_map.interpolate(x, y)
+                    z = self.focus_map.interpolate(x, y, region_id)
                     # Modify the list directly
                     region_fov_coords[i] = (x, y, z)
                     self.scanCoordinates.update_fov_z_level(region_id, i, z)
@@ -2500,7 +2390,6 @@ class MultiPointController(QObject):
             self.multiPointWorker.moveToThread(self.thread)
             # connect signals and slots
             self.thread.started.connect(self.multiPointWorker.run)
-            self.multiPointWorker.signal_detection_stats.connect(self.slot_detection_stats)
             self.multiPointWorker.finished.connect(self._on_acquisition_completed)
             self.multiPointWorker.finished.connect(self.multiPointWorker.deleteLater)
             self.multiPointWorker.finished.connect(self.thread.quit)
@@ -2568,7 +2457,7 @@ class MultiPointController(QObject):
             except:
                 self._log.error("Failed to move to center of current region")
 
-        self.acquisitionFinished.emit()
+        self.acquisition_finished.emit()
         if not self.abort_acqusition_requested:
             self.signal_stitcher.emit(os.path.join(self.base_path, self.experiment_ID))
 
@@ -2577,9 +2466,6 @@ class MultiPointController(QObject):
 
     def request_abort_aquisition(self):
         self.abort_acqusition_requested = True
-
-    def slot_detection_stats(self, stats):
-        self.detection_stats.emit(stats)
 
     def slot_image_to_display(self, image):
         self.image_to_display.emit(image)
@@ -2595,9 +2481,6 @@ class MultiPointController(QObject):
 
     def slot_register_current_fov(self, x_mm, y_mm):
         self.signal_register_current_fov.emit(x_mm, y_mm)
-
-    def slot_napari_rtp_layers_update(self, image, channel):
-        self.napari_rtp_layers_update.emit(image, channel)
 
     def slot_napari_layers_init(self, image_height, image_width, dtype):
         self.napari_layers_init.emit(image_height, image_width, dtype)
@@ -3577,133 +3460,6 @@ class ImageArrayDisplayWindow(QMainWindow):
             self.graphics_widget_4.img.setImage(image, autoLevels=False)
 
 
-class ConfigType(Enum):
-    CHANNEL = "channel"
-    CONFOCAL = "confocal"
-    WIDEFIELD = "widefield"
-
-
-class ChannelConfigurationManager:
-    def __init__(self):
-        self._log = squid.logging.get_logger(self.__class__.__name__)
-        self.config_root = None
-        self.all_configs: Dict[ConfigType, Dict[str, ChannelConfig]] = {
-            ConfigType.CHANNEL: {},
-            ConfigType.CONFOCAL: {},
-            ConfigType.WIDEFIELD: {},
-        }
-        self.active_config_type = ConfigType.CHANNEL if not ENABLE_SPINNING_DISK_CONFOCAL else ConfigType.CONFOCAL
-
-    def set_profile_path(self, profile_path: Path) -> None:
-        """Set the root path for configurations"""
-        self.config_root = profile_path
-
-    def _load_xml_config(self, objective: str, config_type: ConfigType) -> None:
-        """Load XML configuration for a specific config type, generating default if needed"""
-        config_file = self.config_root / objective / f"{config_type.value}_configurations.xml"
-
-        if not config_file.exists():
-            utils_config.generate_default_configuration(str(config_file))
-
-        xml_content = config_file.read_bytes()
-        self.all_configs[config_type][objective] = ChannelConfig.from_xml(xml_content)
-
-    def load_configurations(self, objective: str) -> None:
-        """Load available configurations for an objective"""
-        if ENABLE_SPINNING_DISK_CONFOCAL:
-            # Load both confocal and widefield configurations
-            self._load_xml_config(objective, ConfigType.CONFOCAL)
-            self._load_xml_config(objective, ConfigType.WIDEFIELD)
-        else:
-            # Load only channel configurations
-            self._load_xml_config(objective, ConfigType.CHANNEL)
-
-    def _save_xml_config(self, objective: str, config_type: ConfigType) -> None:
-        """Save XML configuration for a specific config type"""
-        if objective not in self.all_configs[config_type]:
-            return
-
-        config = self.all_configs[config_type][objective]
-        save_path = self.config_root / objective / f"{config_type.value}_configurations.xml"
-
-        if not save_path.parent.exists():
-            save_path.parent.mkdir(parents=True)
-
-        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
-        save_path.write_bytes(xml_str)
-
-    def save_configurations(self, objective: str) -> None:
-        """Save configurations based on spinning disk configuration"""
-        if ENABLE_SPINNING_DISK_CONFOCAL:
-            # Save both confocal and widefield configurations
-            self._save_xml_config(objective, ConfigType.CONFOCAL)
-            self._save_xml_config(objective, ConfigType.WIDEFIELD)
-        else:
-            # Save only channel configurations
-            self._save_xml_config(objective, ConfigType.CHANNEL)
-
-    def save_current_configuration_to_path(self, objective: str, path: Path) -> None:
-        """Only used in TrackingController. Might be temporary."""
-        config = self.all_configs[self.active_config_type][objective]
-        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
-        path.write_bytes(xml_str)
-
-    def get_configurations(self, objective: str) -> List[ChannelMode]:
-        """Get channel modes for current active type"""
-        config = self.all_configs[self.active_config_type].get(objective)
-        if not config:
-            return []
-        return config.modes
-
-    def update_configuration(self, objective: str, config_id: str, attr_name: str, value: Any) -> None:
-        """Update a specific configuration in current active type"""
-        config = self.all_configs[self.active_config_type].get(objective)
-        if not config:
-            self._log.error(f"Objective {objective} not found")
-            return
-
-        for mode in config.modes:
-            if mode.id == config_id:
-                setattr(mode, utils_config.get_attr_name(attr_name), value)
-                break
-
-        self.save_configurations(objective)
-
-    def write_configuration_selected(
-        self, objective: str, selected_configurations: List[ChannelMode], filename: str
-    ) -> None:
-        """Write selected configurations to a file"""
-        config = self.all_configs[self.active_config_type].get(objective)
-        if not config:
-            raise ValueError(f"Objective {objective} not found")
-
-        # Update selected status
-        for mode in config.modes:
-            mode.selected = any(conf.id == mode.id for conf in selected_configurations)
-
-        # Save to specified file
-        xml_str = config.to_xml(pretty_print=True, encoding="utf-8")
-        filename = Path(filename)
-        filename.write_bytes(xml_str)
-
-        # Reset selected status
-        for mode in config.modes:
-            mode.selected = False
-        self.save_configurations(objective)
-
-    def get_channel_configurations_for_objective(self, objective: str) -> List[ChannelMode]:
-        """Get Configuration objects for current active type (alias for get_configurations)"""
-        return self.get_configurations(objective)
-
-    def get_channel_configuration_by_name(self, objective: str, name: str) -> ChannelMode:
-        """Get Configuration object by name"""
-        return next((mode for mode in self.get_configurations(objective) if mode.name == name), None)
-
-    def toggle_confocal_widefield(self, confocal: bool) -> None:
-        """Toggle between confocal and widefield configurations"""
-        self.active_config_type = ConfigType.CONFOCAL if confocal else ConfigType.WIDEFIELD
-
-
 class LaserAFSettingManager:
     """Manages JSON-based laser autofocus configurations."""
 
@@ -3885,589 +3641,6 @@ class ContrastManager:
         self.acquisition_dtype = target_dtype
 
 
-class ScanCoordinates(QObject):
-
-    signal_scan_coordinates_updated = Signal()
-
-    def __init__(self, objectiveStore, navigationViewer, stage: AbstractStage):
-        QObject.__init__(self)
-        self._log = squid.logging.get_logger(self.__class__.__name__)
-        # Wellplate settings
-        self.objectiveStore = objectiveStore
-        self.navigationViewer = navigationViewer
-        self.stage = stage
-        self.well_selector = None
-        self.acquisition_pattern = ACQUISITION_PATTERN
-        self.fov_pattern = FOV_PATTERN
-        self.format = WELLPLATE_FORMAT
-        self.a1_x_mm = A1_X_MM
-        self.a1_y_mm = A1_Y_MM
-        self.wellplate_offset_x_mm = WELLPLATE_OFFSET_X_mm
-        self.wellplate_offset_y_mm = WELLPLATE_OFFSET_Y_mm
-        self.well_spacing_mm = WELL_SPACING_MM
-        self.well_size_mm = WELL_SIZE_MM
-        self.a1_x_pixel = None
-        self.a1_y_pixel = None
-        self.number_of_skip = None
-
-        # Centralized region management
-        self.region_centers = {}  # {region_id: [x, y, z]}
-        self.region_shapes = {}  # {region_id: "Square"}
-        self.region_fov_coordinates = {}  # {region_id: [(x,y,z), ...]}
-
-    def add_well_selector(self, well_selector):
-        self.well_selector = well_selector
-
-    def update_wellplate_settings(
-        self, format_, a1_x_mm, a1_y_mm, a1_x_pixel, a1_y_pixel, size_mm, spacing_mm, number_of_skip
-    ):
-        self.format = format_
-        self.a1_x_mm = a1_x_mm
-        self.a1_y_mm = a1_y_mm
-        self.a1_x_pixel = a1_x_pixel
-        self.a1_y_pixel = a1_y_pixel
-        self.well_size_mm = size_mm
-        self.well_spacing_mm = spacing_mm
-        self.number_of_skip = number_of_skip
-
-    def _index_to_row(self, index):
-        index += 1
-        row = ""
-        while index > 0:
-            index -= 1
-            row = chr(index % 26 + ord("A")) + row
-            index //= 26
-        return row
-
-    def get_selected_wells(self):
-        # get selected wells from the widget
-        self._log.info("getting selected wells for acquisition")
-        if not self.well_selector or self.format == "glass slide":
-            return None
-
-        selected_wells = np.array(self.well_selector.get_selected_cells())
-        well_centers = {}
-
-        # if no well selected
-        if len(selected_wells) == 0:
-            return well_centers
-        # populate the coordinates
-        rows = np.unique(selected_wells[:, 0])
-        _increasing = True
-        for row in rows:
-            items = selected_wells[selected_wells[:, 0] == row]
-            columns = items[:, 1]
-            columns = np.sort(columns)
-            if _increasing == False:
-                columns = np.flip(columns)
-            for column in columns:
-                x_mm = self.a1_x_mm + (column * self.well_spacing_mm) + self.wellplate_offset_x_mm
-                y_mm = self.a1_y_mm + (row * self.well_spacing_mm) + self.wellplate_offset_y_mm
-                well_id = self._index_to_row(row) + str(column + 1)
-                well_centers[well_id] = (x_mm, y_mm)
-            _increasing = not _increasing
-        return well_centers
-
-    def set_live_scan_coordinates(self, x_mm, y_mm, scan_size_mm, overlap_percent, shape):
-        if shape != "Manual" and self.format == "glass slide":
-            if self.region_centers:
-                self.clear_regions()
-            self.add_region("current", x_mm, y_mm, scan_size_mm, overlap_percent, shape)
-
-    def set_well_coordinates(self, scan_size_mm, overlap_percent, shape):
-        new_region_centers = self.get_selected_wells()
-
-        if self.format == "glass slide":
-            pos = self.stage.get_pos()
-            self.set_live_scan_coordinates(pos.x_mm, pos.y_mm, scan_size_mm, overlap_percent, shape)
-
-        elif bool(new_region_centers):
-            # Remove regions that are no longer selected
-            for well_id in list(self.region_centers.keys()):
-                if well_id not in new_region_centers.keys():
-                    self.remove_region(well_id)
-
-            # Add regions for selected wells
-            for well_id, (x, y) in new_region_centers.items():
-                if well_id not in self.region_centers:
-                    self.add_region(well_id, x, y, scan_size_mm, overlap_percent, shape)
-        else:
-            self.clear_regions()
-
-    def set_manual_coordinates(self, manual_shapes, overlap_percent):
-        self.clear_regions()
-        if manual_shapes is not None:
-            # Handle manual ROIs
-            manual_region_added = False
-            for i, shape_coords in enumerate(manual_shapes):
-                scan_coordinates = self.add_manual_region(shape_coords, overlap_percent)
-                if scan_coordinates:
-                    if len(manual_shapes) <= 1:
-                        region_name = f"manual"
-                    else:
-                        region_name = f"manual{i}"
-                    center = np.mean(shape_coords, axis=0)
-                    self.region_centers[region_name] = [center[0], center[1]]
-                    self.region_shapes[region_name] = "Manual"
-                    self.region_fov_coordinates[region_name] = scan_coordinates
-                    manual_region_added = True
-                    self._log.info(f"Added Manual Region: {region_name}")
-            if manual_region_added:
-                self.signal_scan_coordinates_updated.emit()
-        else:
-            self._log.info("No Manual ROI found")
-
-    def add_region(self, well_id, center_x, center_y, scan_size_mm, overlap_percent=10, shape="Square"):
-        """add region based on user inputs"""
-        pixel_size_um = self.objectiveStore.get_pixel_size()
-        fov_size_mm = (pixel_size_um / 1000) * Acquisition.CROP_WIDTH
-        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
-        scan_coordinates = []
-
-        if shape == "Rectangle":
-            # Use scan_size_mm as height, width is 0.6 * height
-            height_mm = scan_size_mm
-            width_mm = scan_size_mm * 0.6
-
-            # Calculate steps for height and width separately
-            steps_height = math.floor(height_mm / step_size_mm)
-            steps_width = math.floor(width_mm / step_size_mm)
-
-            # Calculate actual dimensions
-            actual_scan_height_mm = (steps_height - 1) * step_size_mm + fov_size_mm
-            actual_scan_width_mm = (steps_width - 1) * step_size_mm + fov_size_mm
-
-            steps_height = max(1, steps_height)
-            steps_width = max(1, steps_width)
-
-            half_steps_height = (steps_height - 1) / 2
-            half_steps_width = (steps_width - 1) / 2
-
-            for i in range(steps_height):
-                row = []
-                y = center_y + (i - half_steps_height) * step_size_mm
-                for j in range(steps_width):
-                    x = center_x + (j - half_steps_width) * step_size_mm
-                    if self.validate_coordinates(x, y):
-                        row.append((x, y))
-                        self.navigationViewer.register_fov_to_image(x, y)
-                if self.fov_pattern == "S-Pattern" and i % 2 == 1:
-                    row.reverse()
-                scan_coordinates.extend(row)
-        else:
-            steps = math.floor(scan_size_mm / step_size_mm)
-            if shape == "Circle":
-                tile_diagonal = math.sqrt(2) * fov_size_mm
-                if steps % 2 == 1:  # for odd steps
-                    actual_scan_size_mm = (steps - 1) * step_size_mm + tile_diagonal
-                else:  # for even steps
-                    actual_scan_size_mm = math.sqrt(
-                        ((steps - 1) * step_size_mm + fov_size_mm) ** 2 + (step_size_mm + fov_size_mm) ** 2
-                    )
-
-                if actual_scan_size_mm > scan_size_mm:
-                    actual_scan_size_mm -= step_size_mm
-                    steps -= 1
-            else:
-                actual_scan_size_mm = (steps - 1) * step_size_mm + fov_size_mm
-
-            steps = max(1, steps)  # Ensure at least one step
-            # print("steps:", steps)
-            # print("scan size mm:", scan_size_mm)
-            # print("actual scan size mm:", actual_scan_size_mm)
-            half_steps = (steps - 1) / 2
-            radius_squared = (scan_size_mm / 2) ** 2
-            fov_size_mm_half = fov_size_mm / 2
-
-            for i in range(steps):
-                row = []
-                y = center_y + (i - half_steps) * step_size_mm
-                for j in range(steps):
-                    x = center_x + (j - half_steps) * step_size_mm
-                    if (
-                        shape == "Square"
-                        or shape == "Rectangle"
-                        or (
-                            shape == "Circle"
-                            and self._is_in_circle(x, y, center_x, center_y, radius_squared, fov_size_mm_half)
-                        )
-                    ):
-                        if self.validate_coordinates(x, y):
-                            row.append((x, y))
-                            self.navigationViewer.register_fov_to_image(x, y)
-
-                if self.fov_pattern == "S-Pattern" and i % 2 == 1:
-                    row.reverse()
-                scan_coordinates.extend(row)
-
-        if not scan_coordinates and shape == "Circle":
-            if self.validate_coordinates(center_x, center_y):
-                scan_coordinates.append((center_x, center_y))
-                self.navigationViewer.register_fov_to_image(center_x, center_y)
-
-        self.region_shapes[well_id] = shape
-        self.region_centers[well_id] = [float(center_x), float(center_y), float(self.stage.get_pos().z_mm)]
-        self.region_fov_coordinates[well_id] = scan_coordinates
-        self.signal_scan_coordinates_updated.emit()
-        self._log.info(f"Added Region: {well_id}")
-
-    def remove_region(self, well_id):
-        if well_id in self.region_centers:
-            del self.region_centers[well_id]
-
-            if well_id in self.region_shapes:
-                del self.region_shapes[well_id]
-
-            if well_id in self.region_fov_coordinates:
-                region_scan_coordinates = self.region_fov_coordinates.pop(well_id)
-                for coord in region_scan_coordinates:
-                    self.navigationViewer.deregister_fov_to_image(coord[0], coord[1])
-
-            self._log.info(f"Removed Region: {well_id}")
-            self.signal_scan_coordinates_updated.emit()
-
-    def clear_regions(self):
-        self.region_centers.clear()
-        self.region_shapes.clear()
-        self.region_fov_coordinates.clear()
-        self.navigationViewer.clear_overlay()
-        self.signal_scan_coordinates_updated.emit()
-        self._log.info("Cleared All Regions")
-
-    def add_flexible_region(self, region_id, center_x, center_y, center_z, Nx, Ny, overlap_percent=10):
-        """Convert grid parameters NX, NY to FOV coordinates based on overlap"""
-        fov_size_mm = (self.objectiveStore.get_pixel_size() / 1000) * Acquisition.CROP_WIDTH
-        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
-
-        # Calculate total grid size
-        grid_width_mm = (Nx - 1) * step_size_mm
-        grid_height_mm = (Ny - 1) * step_size_mm
-
-        scan_coordinates = []
-        for i in range(Ny):
-            row = []
-            y = center_y - grid_height_mm / 2 + i * step_size_mm
-            for j in range(Nx):
-                x = center_x - grid_width_mm / 2 + j * step_size_mm
-                if self.validate_coordinates(x, y):
-                    row.append((x, y))
-                    self.navigationViewer.register_fov_to_image(x, y)
-
-            if self.fov_pattern == "S-Pattern" and i % 2 == 1:  # reverse even rows
-                row.reverse()
-            scan_coordinates.extend(row)
-
-        # Region coordinates are already centered since center_x, center_y is grid center
-        if scan_coordinates:  # Only add region if there are valid coordinates
-            self._log.info(f"Added Flexible Region: {region_id}")
-            self.region_centers[region_id] = [center_x, center_y, center_z]
-            self.region_fov_coordinates[region_id] = scan_coordinates
-            self.signal_scan_coordinates_updated.emit()
-        else:
-            self._log.info(f"Region Out of Bounds: {region_id}")
-
-    def add_flexible_region_with_step_size(self, region_id, center_x, center_y, center_z, Nx, Ny, dx, dy):
-        """Convert grid parameters NX, NY to FOV coordinates based on dx, dy"""
-        grid_width_mm = (Nx - 1) * dx
-        grid_height_mm = (Ny - 1) * dy
-
-        # Pre-calculate step sizes and ranges
-        x_steps = [center_x - grid_width_mm / 2 + j * dx for j in range(Nx)]
-        y_steps = [center_y - grid_height_mm / 2 + i * dy for i in range(Ny)]
-
-        scan_coordinates = []
-        for i, y in enumerate(y_steps):
-            row = []
-            x_range = x_steps if i % 2 == 0 else reversed(x_steps)
-            for x in x_range:
-                if self.validate_coordinates(x, y):
-                    row.append((x, y))
-                    self.navigationViewer.register_fov_to_image(x, y)
-            scan_coordinates.extend(row)
-
-        if scan_coordinates:  # Only add region if there are valid coordinates
-            self._log.info(f"Added Flexible Region: {region_id}")
-            self.region_centers[region_id] = [center_x, center_y, center_z]
-            self.region_fov_coordinates[region_id] = scan_coordinates
-            self.signal_scan_coordinates_updated.emit()
-        else:
-            print(f"Region Out of Bounds: {region_id}")
-
-    def add_manual_region(self, shape_coords, overlap_percent):
-        """Add region from manually drawn polygon shape"""
-        if shape_coords is None or len(shape_coords) < 3:
-            self._log.error("Invalid manual ROI data")
-            return []
-
-        pixel_size_um = self.objectiveStore.get_pixel_size()
-        fov_size_mm = (pixel_size_um / 1000) * Acquisition.CROP_WIDTH
-        step_size_mm = fov_size_mm * (1 - overlap_percent / 100)
-
-        # Ensure shape_coords is a numpy array
-        shape_coords = np.array(shape_coords)
-        if shape_coords.ndim == 1:
-            shape_coords = shape_coords.reshape(-1, 2)
-        elif shape_coords.ndim > 2:
-            self._log.error(f"Unexpected shape of manual_shape: {shape_coords.shape}")
-            return []
-
-        # Calculate bounding box
-        x_min, y_min = np.min(shape_coords, axis=0)
-        x_max, y_max = np.max(shape_coords, axis=0)
-
-        # Create a grid of points within the bounding box
-        x_range = np.arange(x_min, x_max + step_size_mm, step_size_mm)
-        y_range = np.arange(y_min, y_max + step_size_mm, step_size_mm)
-        xx, yy = np.meshgrid(x_range, y_range)
-        grid_points = np.column_stack((xx.ravel(), yy.ravel()))
-
-        # # Use Delaunay triangulation for efficient point-in-polygon test
-        # # hull = Delaunay(shape_coords)
-        # # mask = hull.find_simplex(grid_points) >= 0
-        # # or
-        # # Use Ray Casting for point-in-polygon test
-        # mask = np.array([self._is_in_polygon(x, y, shape_coords) for x, y in grid_points])
-
-        # # Filter points inside the polygon
-        # valid_points = grid_points[mask]
-
-        def corners(x_mm, y_mm, fov):
-            center_to_corner = fov / 2
-            return (
-                (x_mm + center_to_corner, y_mm + center_to_corner),
-                (x_mm - center_to_corner, y_mm + center_to_corner),
-                (x_mm - center_to_corner, y_mm - center_to_corner),
-                (x_mm + center_to_corner, y_mm - center_to_corner),
-            )
-
-        valid_points = []
-        for x_center, y_center in grid_points:
-            if not self.validate_coordinates(x_center, y_center):
-                self._log.debug(
-                    f"Manual coords: ignoring {x_center=},{y_center=} because it is outside our movement range."
-                )
-                continue
-            if not self._is_in_polygon(x_center, y_center, shape_coords) and not any(
-                [
-                    self._is_in_polygon(x_corner, y_corner, shape_coords)
-                    for (x_corner, y_corner) in corners(x_center, y_center, fov_size_mm)
-                ]
-            ):
-                self._log.debug(
-                    f"Manual coords: ignoring {x_center=},{y_center=} because no corners or center are in poly. (corners={corners(x_center, y_center, fov_size_mm)}"
-                )
-                continue
-
-            valid_points.append((x_center, y_center))
-        if not valid_points:
-            return []
-        valid_points = np.array(valid_points)
-
-        # Sort points
-        sorted_indices = np.lexsort((valid_points[:, 0], valid_points[:, 1]))
-        sorted_points = valid_points[sorted_indices]
-
-        # Apply S-Pattern if needed
-        if self.fov_pattern == "S-Pattern":
-            unique_y = np.unique(sorted_points[:, 1])
-            for i in range(1, len(unique_y), 2):
-                mask = sorted_points[:, 1] == unique_y[i]
-                sorted_points[mask] = sorted_points[mask][::-1]
-
-        # Register FOVs
-        for x, y in sorted_points:
-            self.navigationViewer.register_fov_to_image(x, y)
-
-        return sorted_points.tolist()
-
-    def add_template_region(
-        self,
-        x_mm: float,
-        y_mm: float,
-        z_mm: float,
-        template_x_mm: np.ndarray,
-        template_y_mm: np.ndarray,
-        region_id: str,
-    ):
-        """Add a region based on a template of x and y coordinates"""
-        scan_coordinates = []
-        for i in range(len(template_x_mm)):
-            x = x_mm + template_x_mm[i]
-            y = y_mm + template_y_mm[i]
-            if self.validate_coordinates(x, y):
-                scan_coordinates.append((x, y))
-                self.navigationViewer.register_fov_to_image(x, y)
-        self.region_centers[region_id] = [x_mm, y_mm, z_mm]
-        self.region_fov_coordinates[region_id] = scan_coordinates
-
-    def region_contains_coordinate(self, region_id: str, x: float, y: float) -> bool:
-        # TODO: check for manual region
-        if not self.validate_region(region_id):
-            return False
-
-        bounds = self.get_region_bounds(region_id)
-        shape = self.get_region_shape(region_id)
-
-        # For square regions
-        if not (bounds["min_x"] <= x <= bounds["max_x"] and bounds["min_y"] <= y <= bounds["max_y"]):
-            return False
-
-        # For circle regions
-        if shape == "Circle":
-            center_x = (bounds["max_x"] + bounds["min_x"]) / 2
-            center_y = (bounds["max_y"] + bounds["min_y"]) / 2
-            radius = (bounds["max_x"] - bounds["min_x"]) / 2
-            if (x - center_x) ** 2 + (y - center_y) ** 2 > radius**2:
-                return False
-
-        return True
-
-    def _is_in_polygon(self, x, y, poly):
-        n = len(poly)
-        inside = False
-        p1x, p1y = poly[0]
-        for i in range(n + 1):
-            p2x, p2y = poly[i % n]
-            if y > min(p1y, p2y):
-                if y <= max(p1y, p2y):
-                    if x <= max(p1x, p2x):
-                        if p1y != p2y:
-                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
-                        if p1x == p2x or x <= xinters:
-                            inside = not inside
-            p1x, p1y = p2x, p2y
-        return inside
-
-    def _is_in_circle(self, x, y, center_x, center_y, radius_squared, fov_size_mm_half):
-        corners = [
-            (x - fov_size_mm_half, y - fov_size_mm_half),
-            (x + fov_size_mm_half, y - fov_size_mm_half),
-            (x - fov_size_mm_half, y + fov_size_mm_half),
-            (x + fov_size_mm_half, y + fov_size_mm_half),
-        ]
-        return all((cx - center_x) ** 2 + (cy - center_y) ** 2 <= radius_squared for cx, cy in corners)
-
-    def has_regions(self):
-        """Check if any regions exist"""
-        return len(self.region_centers) > 0
-
-    def validate_region(self, region_id):
-        """Validate a region exists"""
-        return region_id in self.region_centers and region_id in self.region_fov_coordinates
-
-    def validate_coordinates(self, x, y):
-        return (
-            SOFTWARE_POS_LIMIT.X_NEGATIVE <= x <= SOFTWARE_POS_LIMIT.X_POSITIVE
-            and SOFTWARE_POS_LIMIT.Y_NEGATIVE <= y <= SOFTWARE_POS_LIMIT.Y_POSITIVE
-        )
-
-    def sort_coordinates(self):
-        self._log.info(f"Acquisition pattern: {self.acquisition_pattern}")
-
-        if len(self.region_centers) <= 1:
-            return
-
-        def sort_key(item):
-            key, coord = item
-            if "manual" in key:
-                return (0, coord[1], coord[0])  # Manual coords: sort by y, then x
-            else:
-                letters = "".join(c for c in key if c.isalpha())
-                numbers = "".join(c for c in key if c.isdigit())
-
-                letter_value = 0
-                for i, letter in enumerate(reversed(letters)):
-                    letter_value += (ord(letter) - ord("A")) * (26**i)
-
-                return (1, letter_value, int(numbers))  # Well coords: sort by letter value, then number
-
-        sorted_items = sorted(self.region_centers.items(), key=sort_key)
-
-        if self.acquisition_pattern == "S-Pattern":
-            # Group by row and reverse alternate rows
-            rows = itertools.groupby(sorted_items, key=lambda x: x[1][1] if "manual" in x[0] else x[0][0])
-            sorted_items = []
-            for i, (_, group) in enumerate(rows):
-                row = list(group)
-                if i % 2 == 1:
-                    row.reverse()
-                sorted_items.extend(row)
-
-        # Update dictionaries efficiently
-        self.region_centers = {k: v for k, v in sorted_items}
-        self.region_fov_coordinates = {
-            k: self.region_fov_coordinates[k] for k, _ in sorted_items if k in self.region_fov_coordinates
-        }
-
-    def get_region_bounds(self, region_id):
-        """Get region boundaries"""
-        if not self.validate_region(region_id):
-            return None
-        fovs = np.array(self.region_fov_coordinates[region_id])
-        return {
-            "min_x": np.min(fovs[:, 0]),
-            "max_x": np.max(fovs[:, 0]),
-            "min_y": np.min(fovs[:, 1]),
-            "max_y": np.max(fovs[:, 1]),
-        }
-
-    def get_region_shape(self, region_id):
-        if not self.validate_region(region_id):
-            return None
-        return self.region_shapes[region_id]
-
-    def get_scan_bounds(self):
-        """Get bounds of all scan regions with margin"""
-        if not self.has_regions():
-            return None
-
-        min_x = float("inf")
-        max_x = float("-inf")
-        min_y = float("inf")
-        max_y = float("-inf")
-
-        # Find global bounds across all regions
-        for region_id in self.region_fov_coordinates.keys():
-            bounds = self.get_region_bounds(region_id)
-            if bounds:
-                min_x = min(min_x, bounds["min_x"])
-                max_x = max(max_x, bounds["max_x"])
-                min_y = min(min_y, bounds["min_y"])
-                max_y = max(max_y, bounds["max_y"])
-
-        if min_x == float("inf"):
-            return None
-
-        # Add margin around bounds (5% of larger dimension)
-        width = max_x - min_x
-        height = max_y - min_y
-        margin = max(width, height) * 0.00  # 0.05
-
-        return {"x": (min_x - margin, max_x + margin), "y": (min_y - margin, max_y + margin)}
-
-    def update_fov_z_level(self, region_id, fov, new_z):
-        """Update z-level for a specific FOV and its region center"""
-        if not self.validate_region(region_id):
-            print(f"Region {region_id} not found")
-            return
-
-        # Update FOV coordinates
-        fov_coords = self.region_fov_coordinates[region_id]
-        if fov < len(fov_coords):
-            # Handle both (x,y) and (x,y,z) cases
-            x, y = fov_coords[fov][:2]  # Takes first two elements regardless of length
-            self.region_fov_coordinates[region_id][fov] = (x, y, new_z)
-
-        # If first FOV, update region center coordinates
-        if fov == 0:
-            if len(self.region_centers[region_id]) == 3:
-                self.region_centers[region_id][2] = new_z
-            else:
-                self.region_centers[region_id].append(new_z)
-
-        self._log.info(f"Updated z-level to {new_z} for region:{region_id}, fov:{fov}")
-
-
 from scipy.interpolate import SmoothBivariateSpline, RBFInterpolator
 
 
@@ -4477,14 +3650,20 @@ class FocusMap:
     def __init__(self, smoothing_factor=0.1):
         self._log = squid.logging.get_logger(self.__class__.__name__)
         self.smoothing_factor = smoothing_factor
-        self.surface_fit = None
-        self.method = "spline"  # can be 'spline' or 'rbf'
+        self.method = "spline"  # can be 'spline' or 'rbf' or 'constant'
+        self.global_surface_fit = None
+        self.global_method = None
+        self.global_errors = None
+        self.region_surface_fits = {}
+        self.region_methods = {}
+        self.region_errors = {}
+        self.fit_by_region = False
+        self.focus_points = {}
         self.is_fitted = False
-        self.points_xyz = None
 
     def generate_grid_coordinates(
         self, scanCoordinates: ScanCoordinates, rows: int = 4, cols: int = 4, add_margin: bool = False
-    ) -> List[Tuple[float, float]]:
+    ) -> Dict[str, List[Tuple[float, float]]]:
         """
         Generate focus point grid coordinates for each scan region
 
@@ -4495,12 +3674,13 @@ class FocusMap:
             add_margin: If True, adds margin to avoid points at region borders
 
         Returns:
-            list of (x,y) coordinate tuples for focus points
+            Dictionary with region_id as key and list of (x,y) coordinate tuples as value
         """
         if rows <= 0 or cols <= 0:
             raise ValueError("Number of rows and columns must be greater than 0")
 
-        focus_points = []
+        # Dictionary to store focus points by region
+        focus_coords = {}
 
         # Generate focus points for each region
         for region_id, region_coords in scanCoordinates.region_fov_coordinates.items():
@@ -4509,129 +3689,243 @@ class FocusMap:
             if not bounds:
                 continue
 
+            region_focus_coords = []
             x_min, x_max = bounds["min_x"], bounds["max_x"]
             y_min, y_max = bounds["min_y"], bounds["max_y"]
 
             # For add_margin we are using one more row and col, taking the middle points on the grid so that the
             # focus points are not located at the edges of the scaning grid.
             # TODO: set a value for margin from user input
+            # Calculate x and y positions
             if add_margin:
-                x_step = (x_max - x_min) / cols if cols > 1 else 0
-                y_step = (y_max - y_min) / rows if rows > 1 else 0
+                # With margin, divide the area into equal cells and use cell centers
+                x_step = (x_max - x_min) / cols
+                y_step = (y_max - y_min) / rows
+
+                x_positions = [x_min + (j + 0.5) * x_step for j in range(cols)]
+                y_positions = [y_min + (i + 0.5) * y_step for i in range(rows)]
             else:
-                x_step = (x_max - x_min) / (cols - 1) if cols > 1 else 0
-                y_step = (y_max - y_min) / (rows - 1) if rows > 1 else 0
+                # Without margin, handle special cases for rows=1 or cols=1
+                if rows == 1:
+                    y_positions = [y_min + (y_max - y_min) / 2]  # Center point
+                else:
+                    y_step = (y_max - y_min) / (rows - 1)
+                    y_positions = [y_min + i * y_step for i in range(rows)]
 
-            # Generate grid points
-            for i in range(rows):
-                for j in range(cols):
-                    if add_margin:
-                        x = x_min + x_step / 2 + j * x_step
-                        y = y_min + y_step / 2 + i * y_step
-                    else:
-                        x = x_min + j * x_step
-                        y = y_min + i * y_step
+                if cols == 1:
+                    x_positions = [x_min + (x_max - x_min) / 2]  # Center point
+                else:
+                    x_step = (x_max - x_min) / (cols - 1)
+                    x_positions = [x_min + j * x_step for j in range(cols)]
 
+            # Generate grid points by combining x and y positions
+            for y in y_positions:
+                for x in x_positions:
                     # Check if point is within region bounds
                     if scanCoordinates.validate_coordinates(x, y) and scanCoordinates.region_contains_coordinate(
                         region_id, x, y
                     ):
-                        focus_points.append((x, y))
+                        region_focus_coords.append((x, y))
 
-        return focus_points
+            focus_coords[region_id] = region_focus_coords
 
-    def set_method(self, method):
+        return focus_coords
+
+    def set_method(self, method: str):
         """Set interpolation method
 
         Args:
             method (str): Either 'spline' or 'rbf' (Radial Basis Function)
         """
-        if method not in ["spline", "rbf"]:
-            raise ValueError("Method must be either 'spline' or 'rbf'")
+        if method not in ["spline", "rbf", "constant"]:
+            raise ValueError("Method must be either 'spline' or 'rbf' or 'constant'")
         self.method = method
         self.is_fitted = False
+        self.region_surface_fits = {}  # Reset region fits when method changes
 
-    def fit(self, points):
+    def set_fit_by_region(self, fit_by_region: bool):
+        """Set if the surface fit should be done by region or globally
+
+        Args:
+            fit_by_region (bool): If True, fitting functions will be bounded by region
+        """
+        self.fit_by_region = fit_by_region
+
+    def fit(self, points: Dict[str, List[Tuple[float, float, float]]]):
         """Fit surface through provided focus points
+
+        Args:
+            points: A dictionary with region_id as key and list of (x,y,z) tuples as value
+
+        Returns:
+            If by_region=False: tuple (mean_error, std_error) in mm
+            If by_region=True: dict with region_id as key and (mean_error, std_error) as value
+        """
+        if not hasattr(self, "fit_by_region"):
+            raise ValueError("fit_by_region must be set before fitting")
+
+        self.focus_points = points
+
+        if self.fit_by_region:
+            self.region_surface_fits = {}
+            self.region_methods = {}
+            self.region_errors = {}
+            for region_id, region_points in points.items():
+                if len(region_points) in [0, 2, 3]:
+                    raise ValueError("Use 1 point for constant plane, or at least 4 points for surface fitting")
+                self.region_surface_fits[region_id], self.region_methods[region_id], self.region_errors[region_id] = (
+                    self._fit_surface(region_points)
+                )
+            if self.method == "constant":
+                mean_error = 0
+                std_error = 0
+            else:
+                all_errors = np.concatenate([errors for errors in self.region_errors.values()])
+                mean_error = np.mean(all_errors)
+                std_error = np.std(all_errors)
+        else:
+            all_points = []
+            for region_points in points.values():
+                all_points.extend(region_points)
+            if len(all_points) < 4:
+                raise ValueError("Use 1 point for constant plane, or at least 4 points for surface fitting")
+
+            self.global_surface_fit, self.global_method, self.global_errors = self._fit_surface(all_points)
+            mean_error = np.mean(self.global_errors)
+            std_error = np.std(self.global_errors)
+
+        self.is_fitted = True
+
+        return mean_error, std_error
+
+    def _fit_surface(self, points: List[Tuple[float, float, float]]) -> Tuple[Callable, str, np.ndarray]:
+        """Fit surface through provided focus points for a specific region or globally
 
         Args:
             points (list): List of (x,y,z) tuples
 
         Returns:
-            tuple: (mean_error, std_error) in mm
+            tuple: (surface_fit, method, errors)
         """
-        if len(points) < 4:
-            raise ValueError("Need at least 4 points to fit surface")
+        points_array = np.array(points)
+        x = points_array[:, 0]
+        y = points_array[:, 1]
+        z = points_array[:, 2]
 
-        self.points = np.array(points)
-        x = self.points[:, 0]
-        y = self.points[:, 1]
-        z = self.points[:, 2]
+        if len(points) == 1:
+            # For single point, create a flat plane at that z-height
+            if self.method != "constant":
+                self._log.warning("One point can only be used for constant plane, falling back to constant")
+            z_value = z[0]
+            surface_fit = self._fit_constant_plane(z_value)
+            method = "constant"
 
-        if self.method == "spline":
-            try:
-                self.surface_fit = SmoothBivariateSpline(
-                    x, y, z, kx=3, ky=3, s=self.smoothing_factor  # cubic spline in x  # cubic spline in y
-                )
-            except Exception as e:
-                self._log.exception(f"Spline fitting failed: {str(e)}, falling back to RBF")
-                self.method = "rbf"
-                self._fit_rbf(x, y, z)
+            self.is_fitted = True
+            errors = None  # No error for a single point
         else:
-            self._fit_rbf(x, y, z)
+            if self.method == "spline":
+                try:
+                    surface_fit = SmoothBivariateSpline(
+                        x, y, z, kx=3, ky=3, s=self.smoothing_factor  # cubic spline in x  # cubic spline in y
+                    )
+                    method = self.method
+                except Exception as e:
+                    self._log.warning(f"Spline fitting failed: {str(e)}, falling back to RBF")
+                    surface_fit = self._fit_rbf(x, y, z)
+                    method = "rbf"
+            elif self.method == "constant":
+                self._log.warning("Constant method cannot be used for multiple points, falling back to RBF")
+                surface_fit = self._fit_rbf(x, y, z)
+                method = "rbf"
+            else:
+                surface_fit = self._fit_rbf(x, y, z)
+                method = "rbf"
 
-        self.is_fitted = True
-        errors = self._calculate_fitting_errors()
-        return np.mean(errors), np.std(errors)
+            self.is_fitted = True
+            errors = self._calculate_fitting_errors(points, surface_fit, method)
+
+        return surface_fit, method, errors
 
     def _fit_rbf(self, x, y, z):
         """Fit using Radial Basis Function interpolation"""
         xy = np.column_stack((x, y))
-        self.surface_fit = RBFInterpolator(xy, z, kernel="thin_plate_spline", epsilon=self.smoothing_factor)
+        return RBFInterpolator(xy, z, kernel="thin_plate_spline", epsilon=self.smoothing_factor)
 
-    def interpolate(self, x, y):
+    def _fit_constant_plane(self, z_value):
+        """Create a constant height plane"""
+
+        def constant_plane(x, y):
+            if isinstance(x, np.ndarray):
+                return np.full_like(x, z_value)
+            else:
+                return z_value
+
+        return constant_plane
+
+    def interpolate(self, x, y, region_id=None):
         """Get interpolated Z value at given (x,y) coordinates
 
         Args:
             x (float or array): X coordinate(s)
             y (float or array): Y coordinate(s)
+            region_id: Region identifier for region-specific interpolation
 
         Returns:
             float or array: Interpolated Z value(s)
         """
-        if not self.is_fitted:
+        if not self.is_fitted and not self.region_surface_fits:
             raise RuntimeError("Must fit surface before interpolating")
 
+        # If fit_by_region is True and region_id is provided, use region-specific surface
+        if self.fit_by_region:
+            if region_id is None or region_id not in self.region_surface_fits:
+                raise ValueError(f"Region {region_id} not found")
+            surface_fit = self.region_surface_fits[region_id]
+            method = self.region_methods[region_id]
+        else:
+            surface_fit = self.global_surface_fit
+            method = self.global_method
+
+        return self._interpolate_helper(x, y, surface_fit, method)
+
+    def _interpolate_helper(self, x, y, surface_fit, method):
         if np.isscalar(x) and np.isscalar(y):
-            if self.method == "spline":
-                return float(self.surface_fit.ev(x, y))
-            else:
-                return float(self.surface_fit([[x, y]]))
+            if method == "spline":
+                return float(surface_fit.ev(x, y))
+            elif method == "constant":
+                return surface_fit(x, y)
+            else:  # rbf
+                return float(surface_fit([[x, y]]))
         else:
             x = np.asarray(x)
             y = np.asarray(y)
-            if self.method == "spline":
-                return self.surface_fit.ev(x, y)
-            else:
+            if method == "spline":
+                return surface_fit.ev(x, y)
+            elif method == "constant":
+                return surface_fit(x, y)
+            else:  # rbf
                 xy = np.column_stack((x.ravel(), y.ravel()))
-                z = self.surface_fit(xy)
+                z = surface_fit(xy)
                 return z.reshape(x.shape)
 
-    def _calculate_fitting_errors(self):
+    def _calculate_fitting_errors(
+        self, points: List[Tuple[float, float, float]], surface_fit: Callable, method: str
+    ) -> np.ndarray:
         """Calculate absolute errors at measured points"""
         errors = []
-        for x, y, z_measured in self.points:
-            z_fit = self.interpolate(x, y)
+        for x, y, z_measured in points:
+            z_fit = self._interpolate_helper(x, y, surface_fit, method)
             errors.append(abs(z_fit - z_measured))
         return np.array(errors)
 
-    def get_surface_grid(self, x_range, y_range, num_points=50):
+    def get_surface_grid(self, x_range, y_range, num_points=50, region_id=None):
         """Generate grid of interpolated Z values for visualization
 
         Args:
             x_range (tuple): (min_x, max_x)
             y_range (tuple): (min_y, max_y)
             num_points (int): Number of points per dimension
+            region_id: Region identifier for region-specific visualization
 
         Returns:
             tuple: (X grid, Y grid, Z grid)
@@ -4642,7 +3936,7 @@ class FocusMap:
         x = np.linspace(x_range[0], x_range[1], num_points)
         y = np.linspace(y_range[0], y_range[1], num_points)
         X, Y = np.meshgrid(x, y)
-        Z = self.interpolate(X, Y)
+        Z = self.interpolate(X, Y, region_id)
 
         return X, Y, Z
 
@@ -4814,13 +4108,9 @@ class LaserAutofocusController(QObject):
             return False
 
         # Move to first position and measure
+        self._move_z(-self.laser_af_properties.pixel_to_um_calibration_distance / 2)
         if self.piezo is not None:
-            self._move_z(-self.laser_af_properties.pixel_to_um_calibration_distance / 2)
             time.sleep(MULTIPOINT_PIEZO_DELAY_MS / 1000)
-        else:
-            # TODO: change to _move_z after backlash correction is absorbed into firmware
-            self.stage.move_z(-1.5 * self.laser_af_properties.pixel_to_um_calibration_distance / 1000)
-            self.stage.move_z(self.laser_af_properties.pixel_to_um_calibration_distance / 1000)
 
         result = self._get_laser_spot_centroid()
         if result is None:
@@ -4859,13 +4149,9 @@ class LaserAutofocusController(QObject):
             )
 
         # move back to initial position
+        self._move_z(-self.laser_af_properties.pixel_to_um_calibration_distance / 2)
         if self.piezo is not None:
-            self._move_z(-self.laser_af_properties.pixel_to_um_calibration_distance / 2)
             time.sleep(MULTIPOINT_PIEZO_DELAY_MS / 1000)
-        else:
-            # TODO: change to _move_z after backlash correction is absorbed into firmware
-            self.stage.move_z(-1.5 * self.laser_af_properties.pixel_to_um_calibration_distance / 1000)
-            self.stage.move_z(self.laser_af_properties.pixel_to_um_calibration_distance / 1000)
 
         # Calculate conversion factor
         if x1 - x0 == 0:
